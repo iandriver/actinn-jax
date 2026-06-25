@@ -1,0 +1,115 @@
+# actinn-jax
+
+Fast, dependency-light cell-type **reference mapping** for single-cell data: train
+on a labeled reference dataset, then annotate any query dataset.
+
+`actinn-jax` is a from-scratch **JAX** reimplementation of
+[ACTINN](https://github.com/mafeiyang/ACTINN.git) (Ma, Pellegrini et al.). The
+original ACTINN was written in TensorFlow 1.x; this version replaces it with a
+small JIT-compiled JAX MLP and a sparse-aware preprocessing pipeline, adds a
+cached "train once, map many" reference model, and scales to atlas-sized data.
+
+## Attribution
+
+This package is based entirely on the ACTINN method. If you use it, please cite
+the original work:
+
+> Feiyang Ma, Matteo Pellegrini. **ACTINN: automated identification of cell types
+> in single cell RNA sequencing.** *Bioinformatics*, 2020.
+> https://doi.org/10.1093/bioinformatics/btz592
+
+Original ACTINN implementation: https://github.com/mafeiyang/ACTINN
+
+## Installation
+
+```bash
+git clone https://github.com/iandriver/actinn-jax.git
+cd actinn-jax
+pip install .
+```
+
+### Requirements
+
+1. [JAX](https://docs.jax.dev/en/latest/installation.html) — CPU by default, runs everywhere
+2. [scanpy](https://scanpy.readthedocs.io/) / [anndata](https://anndata.readthedocs.io/)
+
+The classifier is a small MLP in JAX — **no TensorFlow dependency**. The model is
+small enough that the **CPU path is fast and is recommended**. On Apple Silicon an
+experimental GPU backend is available via `pip install .[metal]` (installs
+`jax-metal`), but for this model size it is not generally faster than CPU.
+
+## Input data
+
+`actinn-jax` expects **raw integer counts**. For CELLxGENE-style objects where
+`.X` is normalized and raw counts live in `.raw`, the default `use_raw='auto'`
+picks the raw counts automatically. Genes are matched by `var_names`
+(case-insensitive); the reference and query must share gene-name format.
+
+## Usage
+
+### One-off: train and predict in a single call
+
+```python
+import actinn_jax as aj
+
+adata, params = aj.celltype_predict_actinn(
+    adata,                       # query AnnData (raw counts)
+    'reference.h5ad',            # labeled reference
+    '/path/to/output_dir',
+    train_label_name='cell_type',
+    output_label_name='celltype_pred',
+)
+```
+
+Predictions are written to `adata.obs['celltype_pred']` and confidences to
+`adata.obs['celltype_pred_probability']`.
+
+### Reference mapping: train once, map many queries (fastest)
+
+```python
+import actinn_jax as aj
+
+# Train once and cache to disk (weights .npz + metadata .json).
+model = aj.train_reference('reference.h5ad', train_label_name='cell_type')
+model.save('/path/to/my_reference')
+
+# Later / elsewhere: load and annotate any number of queries, no retraining.
+model = aj.ReferenceModel.load('/path/to/my_reference')
+adata, _ = aj.predict(adata, model, output_label_name='celltype_pred')
+```
+
+### Large / atlas-scale references
+
+```python
+# Balance + cap training cells per class (bounds memory, speeds up training);
+# prediction runs in cell chunks so huge queries never fully densify.
+model = aj.train_reference(
+    'big_atlas.h5ad',
+    train_label_name='cell_type',
+    max_cells_per_label=500,     # subsample per class
+)
+adata, _ = aj.predict(adata, model, chunk_size=50000)
+```
+
+## How it works
+
+- **Sparse-aware preprocessing** — gene-name matching and intersection happen on
+  the sparse matrix; only the shared-gene submatrix is densified.
+- **Normalization** follows ACTINN: per-cell library-size normalize to 1e4,
+  `log2(x+1)`, then expr- and CV-percentile gene filtering.
+- **Model** — a 4-layer MLP (100→50→25→n_types), Glorot init, Adam with
+  exponential-decay schedule, trained with a JIT-compiled epoch step.
+- **Cached `ReferenceModel`** stores the trained weights, gene set, and label
+  mapping so queries are projected onto the reference's fixed gene space.
+
+## Tests & benchmarks
+
+```bash
+pip install .[test]
+pytest                              # synthetic-data unit tests
+python benchmark/benchmark.py       # timing on synthetic data
+```
+
+## License
+
+MIT. See [LICENSE](LICENSE).

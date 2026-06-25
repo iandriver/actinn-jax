@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+
+# Virtual environments
+.venv/
+.venv-*/
+venv/
+env/
+
+# Tooling / OS
+.pytest_cache/
+.ipynb_checkpoints/
+.DS_Store
+
+# Data / model artifacts (don't commit large h5ad or trained models)
+*.h5ad
+*.npz
+predicted_*.txt

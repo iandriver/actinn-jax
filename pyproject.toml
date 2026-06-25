@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "actinn-jax"
+version = "0.1.0"
+description = "Fast JAX reimplementation of ACTINN for single-cell cell-type reference mapping"
+readme = "README.md"
+authors = [
+    {name = "Ian Driver", email = "driver.ian@gmail.com"}
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+keywords = ["single-cell", "cell-type-annotation", "ACTINN", "jax", "scanpy"]
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.15",
+    "scipy>=1.7",
+    "anndata>=0.6.22",
+    "pandas>=1.3",
+    "h5py",
+    "scanpy>=1.8",
+    "jax>=0.4.0",
+    "jaxlib>=0.4.0",
+    "optax>=0.1.5",
+]
+
+[project.optional-dependencies]
+metal = ["jax-metal"]
+test = ["pytest"]
+
+[tool.setuptools]
+packages = ["actinn_jax"]
+zip-safe = false
+
+[tool.setuptools.package-data]
+actinn_jax = ["*"]
