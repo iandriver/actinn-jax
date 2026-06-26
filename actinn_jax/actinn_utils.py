@@ -18,6 +18,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+import scipy.sparse as sp
 
 # Network architecture: hidden layer widths, matching the original ACTINN.
 LAYER_SIZES = (100, 50, 25)
@@ -91,8 +92,11 @@ def train(
 
     Parameters
     ----------
-    X : array (n_samples, n_features)
-        Scaled expression matrix (cells x genes).
+    X : array or scipy.sparse matrix (n_samples, n_features)
+        Scaled expression matrix (cells x genes). May be sparse: minibatches are
+        densified one at a time, so peak memory scales with (batch_size x features)
+        rather than (n_samples x features) -- important on atlas-scale references
+        where the kept-gene matrix is nearly as wide as the full one.
     Y : array (n_samples, n_types)
         One-hot encoded labels.
 
@@ -101,8 +105,10 @@ def train(
     dict of numpy arrays
         Trained parameters (W1..W4, b1..b4).
     """
-    X = jnp.asarray(X, dtype=jnp.float32)
-    Y = jnp.asarray(Y, dtype=jnp.float32)
+    sparse = sp.issparse(X)
+    if not sparse:
+        X = np.asarray(X, dtype=np.float32)
+    Y = np.asarray(Y, dtype=np.float32)
     n_samples, n_features = X.shape
     n_types = Y.shape[1]
 
@@ -114,36 +120,41 @@ def train(
     grad_fn = jax.value_and_grad(partial(_loss, l2=l2))
 
     @jax.jit
-    def run_epoch(params, opt_state, key):
-        perm = jax.random.permutation(key, n_samples)[: n_batches * batch_size]
-        Xb = X[perm].reshape(n_batches, batch_size, n_features)
-        Yb = Y[perm].reshape(n_batches, batch_size, n_types)
+    def update(params, opt_state, xb, yb):
+        loss, grads = grad_fn(params, xb, yb)
+        updates, opt_state = optimizer.update(grads, opt_state, params)
+        return optax.apply_updates(params, updates), opt_state, loss
 
-        def step(carry, batch):
-            params, opt_state = carry
-            xb, yb = batch
-            loss, grads = grad_fn(params, xb, yb)
-            updates, opt_state = optimizer.update(grads, opt_state, params)
-            params = optax.apply_updates(params, updates)
-            return (params, opt_state), loss
-
-        (params, opt_state), losses = jax.lax.scan(
-            step, (params, opt_state), (Xb, Yb)
-        )
-        return params, opt_state, losses.mean()
+    def densify(rows):
+        xb = X[rows]
+        return np.asarray(xb.toarray() if sparse else xb, dtype=np.float32)
 
     key = jax.random.PRNGKey(seed)
     for epoch in range(num_epochs):
         key, subkey = jax.random.split(key)
-        params, opt_state, epoch_cost = run_epoch(params, opt_state, subkey)
+        perm = np.asarray(jax.random.permutation(subkey, n_samples))
+        epoch_cost = 0.0
+        for b in range(n_batches):
+            rows = perm[b * batch_size:(b + 1) * batch_size]
+            xb = jnp.asarray(densify(rows))
+            yb = jnp.asarray(Y[rows])
+            params, opt_state, loss = update(params, opt_state, xb, yb)
+            epoch_cost += float(loss) / n_batches
         if print_cost and (epoch + 1) % 5 == 0:
-            print("Cost after epoch %i: %f" % (epoch + 1, float(epoch_cost)))
+            print("Cost after epoch %i: %f" % (epoch + 1, epoch_cost))
 
-    # Report training accuracy, then return host (numpy) arrays for portability.
-    train_acc = float((predict_labels(params, X) == jnp.argmax(Y, axis=1)).mean())
     if print_cost:
+        # Training accuracy, computed in batches to avoid densifying all of X.
+        correct = total = 0
+        for b in range(n_batches + 1):
+            rows = np.arange(b * batch_size, min((b + 1) * batch_size, n_samples))
+            if len(rows) == 0:
+                continue
+            pred = np.asarray(predict_labels(params, densify(rows)))
+            correct += int((pred == Y[rows].argmax(axis=1)).sum())
+            total += len(rows)
         print("Parameters have been trained!")
-        print("Train Accuracy:", train_acc)
+        print("Train Accuracy:", correct / max(total, 1))
     return {k: np.asarray(v) for k, v in params.items()}
 
 

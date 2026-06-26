@@ -71,48 +71,66 @@ def _extract(adata, label_name=None, use_raw="auto"):
     return X, genes, labels
 
 
-def _normalize(dense):
-    """Library-size normalize each cell to 1e4, then ``log2(x + 1)`` (in place)."""
-    lib = dense.sum(axis=1, keepdims=True)
-    np.divide(dense, lib, out=dense, where=lib > 0)
-    dense *= 1e4
-    return np.log2(dense + 1, out=dense)
+def _normalize(X):
+    """CP10k + ``log2(x + 1)`` on a sparse matrix, returning a sparse CSR.
+
+    The transform is sparsity-preserving (``log2(0 + 1) = 0``), so the full dense
+    matrix is never materialised -- only the selected-gene submatrix is densified
+    downstream. This is what keeps training/prediction memory bounded on atlases.
+    """
+    X = X.tocsr()
+    lib = np.asarray(X.sum(axis=1)).ravel()
+    inv = np.zeros_like(lib, dtype=np.float32)
+    nz = lib > 0
+    inv[nz] = 1e4 / lib[nz]
+    Xn = (sp.diags(inv) @ X).tocsr()
+    Xn.data = np.log2(Xn.data + 1.0, dtype=np.float32)
+    return Xn
 
 
-def _gene_filter(normalized):
+def _gene_filter(Xn):
     """Boolean mask of genes kept by ACTINN's expr- and CV-percentile filters.
 
-    ``normalized`` is dense ``(n_cells, n_genes)``. Genes are kept when both their
-    summed expression and their coefficient of variation fall within the 1st-99th
-    percentile range (computed across all supplied cells), matching the original.
+    Computed from sparse per-column statistics (mean, E[x^2]) so the dense matrix
+    is never built; result is identical to the original dense computation: genes
+    are kept when both summed expression and CV fall within the 1st-99th percentile
+    range across all supplied cells.
     """
-    expr = np.nansum(normalized, axis=0)
+    n = Xn.shape[0]
+    mean = np.asarray(Xn.mean(axis=0)).ravel()
+    sq = np.asarray(Xn.multiply(Xn).mean(axis=0)).ravel()
+    std = np.sqrt(np.maximum(sq - mean ** 2, 0.0))
+    expr = mean * n
     keep = (expr >= np.percentile(expr, 1)) & (expr <= np.percentile(expr, 99))
 
-    sub = normalized[:, keep]
-    mean = sub.mean(axis=0)
-    std = sub.std(axis=0)
     cv = np.divide(std, mean, out=np.zeros_like(std), where=mean > 0)
-    cv_keep = (cv >= np.percentile(cv, 1)) & (cv <= np.percentile(cv, 99))
+    cvk = cv[keep]
+    cv_keep = (cvk >= np.percentile(cvk, 1)) & (cvk <= np.percentile(cvk, 99))
 
-    mask = np.zeros(normalized.shape[1], dtype=bool)
+    mask = np.zeros(Xn.shape[1], dtype=bool)
     mask[np.where(keep)[0][cv_keep]] = True
     return mask
 
 
 def _project(X, gene_index, target_genes):
-    """Dense ``(n_cells, len(target_genes))`` with columns aligned to ``target_genes``.
+    """Sparse ``(n_cells, len(target_genes))`` with columns aligned to ``target_genes``.
 
-    Genes present in ``gene_index`` are copied; genes missing from the query are
-    left as zeros. This is how a query is projected onto a reference's fixed gene
-    set. ``gene_index`` must be unique (it is, after de-duplication).
+    Genes present in ``gene_index`` are copied; genes missing from the query stay
+    zero. Stays sparse (a scatter matmul places present columns into their target
+    slots), so projecting a query onto a reference's gene set never densifies the
+    full gene space. ``gene_index`` must be unique (it is, after de-duplication).
     """
     pos = gene_index.get_indexer(pd.Index(target_genes))
-    out = np.zeros((X.shape[0], len(target_genes)), dtype=np.float32)
-    present = pos >= 0
-    if present.any():
-        out[:, present] = X[:, pos[present]].toarray()
-    return out
+    present = np.where(pos >= 0)[0]
+    if len(present) == 0:
+        return sp.csr_matrix((X.shape[0], len(target_genes)), dtype=np.float32)
+    sub = X[:, pos[present]]
+    scatter = sp.csr_matrix(
+        (np.ones(len(present), dtype=np.float32),
+         (np.arange(len(present)), present)),
+        shape=(len(present), len(target_genes)),
+    )
+    return (sub @ scatter).tocsr()
 
 
 def _encode_labels(labels):
@@ -146,10 +164,13 @@ class ReferenceModel:
         self.classes = list(classes)
 
     def _features_block(self, X, genes):
-        """Project + normalize a sparse count block onto the reference gene space."""
-        dense = _project(X, genes, self.norm_genes)
-        _normalize(dense)
-        return dense[:, self.select_idx]
+        """Project + normalize a sparse count block onto the reference gene space.
+
+        Projection and normalization stay sparse; only the selected-gene columns
+        are densified for the network, keeping per-chunk memory small.
+        """
+        Xn = _normalize(_project(X, genes, self.norm_genes))
+        return Xn[:, self.select_idx].toarray()
 
     def predict_proba(self, adata, use_raw="auto", chunk_size=50000):
         """Softmax probabilities ``(n_cells, n_types)``, computed in cell chunks.
@@ -255,9 +276,11 @@ def train_reference(
         sel = _subsample_indices(labels, max_cells_per_label, seed)
         X, labels = X[sel], labels[sel]
 
-    dense = X.toarray()
-    _normalize(dense)
-    mask = _gene_filter(dense)
+    # Normalize + gene-filter on the sparse matrix; densify only the selected
+    # genes for the network, so memory scales with (cells x selected genes) rather
+    # than (cells x all genes).
+    Xn = _normalize(X)
+    mask = _gene_filter(Xn)
     if mask.sum() < MIN_SHARED_GENES:
         raise ValueError(
             "Not enough informative genes after filtering "
@@ -270,8 +293,10 @@ def train_reference(
 
     print("Cell types in training set:", {c: i for i, c in enumerate(classes)})
     print("# Training cells:", len(labels))
+    # Pass the sparse selected-gene matrix; au.train densifies per minibatch so
+    # peak memory stays at (batch_size x genes), not (cells x genes).
     params = au.train(
-        dense[:, select_idx], Y,
+        Xn[:, select_idx].tocsr(), Y,
         starting_learning_rate=learning_rate,
         num_epochs=num_epochs,
         batch_size=batch_size,
@@ -353,12 +378,14 @@ def celltype_predict_actinn(
     ref = _project(Xr, genes_r, common)
     qry = _project(Xq, genes_q, common)
 
-    # Joint normalization + gene filtering across reference and query.
-    combined = np.vstack([ref, qry])
-    _normalize(combined)
+    # Joint normalization + gene filtering across reference and query, kept sparse;
+    # only the selected-gene submatrices are densified for the network.
+    n_ref = ref.shape[0]
+    combined = _normalize(sp.vstack([ref, qry]).tocsr())
     mask = _gene_filter(combined)
     combined = combined[:, mask]
-    ref, qry = combined[: ref.shape[0]], combined[ref.shape[0]:]
+    ref = combined[:n_ref].tocsr()           # sparse; au.train densifies per batch
+    qry = combined[n_ref:].toarray()
 
     int_labels, classes = _encode_labels(labels)
     Y = au.one_hot(int_labels, len(classes))
