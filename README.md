@@ -3,6 +3,45 @@
 Fast, dependency-light cell-type **reference mapping** for single-cell data: train
 on a labeled reference dataset, then annotate any query dataset.
 
+## ⭐ Annotate any human single-cell data — fast, on CPU
+
+A **two-stage workflow**: a foundation model (scPRINT) is used *once, offline* to
+discover a coarse→fine cell-type hierarchy in a reference; a small actinn-jax model
+trained on it then annotates new data in **milliseconds on a CPU — no GPU, no scPRINT
+at inference**. A pre-trained broad-human reference (Tabula Sapiens, ~180 cell types
+across ~25 organs) ships with the package, so unknown data works out of the box:
+
+```python
+import scanpy as sc, actinn_jax as aj
+
+adata = sc.read_h5ad("my_human_data.h5ad")          # raw counts
+model = aj.bundled_reference("broad_human_v1")       # pre-trained, CPU-only
+adata = aj.annotate(adata, model)                    # -> obs['celltype', _coarse, _probability]
+```
+
+Or from the command line:
+
+```bash
+python examples/quickstart_annotate.py my_human_data.h5ad   # writes *_annotations.csv
+```
+
+**Build your own reference** (the only step that may use a GPU; install `scprint`):
+
+```python
+from actinn_jax.embed import scprint_embed
+emb   = scprint_embed(ref_adata)                                   # GPU/MPS, once
+model = aj.build_hierarchical_reference(ref_adata, "cell_type", emb)
+model.save("my_reference")                                         # then annotate on CPU
+```
+
+See [`examples/`](examples) for both. The *why* — accuracy/speed/memory benchmarks and
+the design rationale — lives in the companion
+[actinn-jax-benchmark](https://github.com/iandriver/actinn-jax-benchmark) repo
+([model-flow mini-paper](https://github.com/iandriver/actinn-jax-benchmark/blob/main/docs/MODEL_FLOW.md)).
+
+---
+
+
 `actinn-jax` is a from-scratch **JAX** reimplementation of
 [ACTINN](https://github.com/mafeiyang/ACTINN.git) (Ma, Pellegrini et al.). The
 original ACTINN was written in TensorFlow 1.x; this version replaces it with a

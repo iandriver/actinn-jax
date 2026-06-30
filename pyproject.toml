@@ -47,4 +47,4 @@ packages = ["actinn_jax"]
 zip-safe = false
 
 [tool.setuptools.package-data]
-actinn_jax = ["*"]
+actinn_jax = ["*", "references/*/*.npz", "references/*/*.json"]
