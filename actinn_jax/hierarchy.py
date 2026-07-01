@@ -54,8 +54,13 @@ class HierarchicalReferenceModel:
         self.type_to_group = dict(type_to_group)
         self.classes = list(classes)
 
-    def predict_frame(self, adata, use_raw="auto", chunk_size=50000):
-        """Coarse-predict, route each cell to its group's fine model, return a frame."""
+    def predict_frame(self, adata, use_raw="auto", chunk_size=50000, min_prob=None):
+        """Coarse-predict, route each cell to its group's fine model, return a frame.
+
+        ``min_prob`` (0-1, optional): cells whose final fine-label probability is below
+        this are relabeled ``"unknown"`` (abstain), so out-of-distribution cells — types
+        not in the reference — are flagged rather than force-labeled.
+        """
         cframe, _ = self.coarse.predict_frame(adata, use_raw=use_raw, chunk_size=chunk_size)
         coarse_pred = cframe["celltype"].to_numpy()
         coarse_prob = cframe["celltype_probability"].to_numpy()
@@ -73,12 +78,16 @@ class HierarchicalReferenceModel:
                 ff, _ = fm.predict_frame(adata[mask], use_raw=use_raw, chunk_size=chunk_size)
                 out[mask] = ff["celltype"].to_numpy()
                 prob[mask] = ff["celltype_probability"].to_numpy()
+        if min_prob is not None:
+            out[prob < min_prob] = "unknown"
         return pd.DataFrame({"celltype": out, "celltype_probability": prob,
                              "coarse": coarse_pred}, index=list(adata.obs_names)), None
 
-    def predict(self, adata, output_label_name="celltype", use_raw="auto", chunk_size=50000):
+    def predict(self, adata, output_label_name="celltype", use_raw="auto",
+                chunk_size=50000, min_prob=None):
         """Annotate ``adata`` in place: adds ``celltype``, ``_probability``, ``_coarse``."""
-        frame, _ = self.predict_frame(adata, use_raw=use_raw, chunk_size=chunk_size)
+        frame, _ = self.predict_frame(adata, use_raw=use_raw, chunk_size=chunk_size,
+                                      min_prob=min_prob)
         adata.obs[output_label_name] = frame.loc[adata.obs.index, "celltype"]
         adata.obs[output_label_name + "_probability"] = frame.loc[adata.obs.index, "celltype_probability"]
         adata.obs[output_label_name + "_coarse"] = frame.loc[adata.obs.index, "coarse"]
@@ -112,16 +121,26 @@ class HierarchicalReferenceModel:
         return cls(coarse, fine, man["type_to_group"], man["classes"])
 
 
-def build_hierarchical_reference(ref, label_key, embeddings, n_groups=8, **train_kwargs):
-    """Build a HierarchicalReferenceModel from a labeled reference + its embeddings.
+def build_hierarchical_reference(ref, label_key, embeddings=None, n_groups=8,
+                                 hierarchy=None, **train_kwargs):
+    """Build a HierarchicalReferenceModel from a labeled reference.
 
-    ``embeddings`` is a per-cell array aligned to ``ref`` (e.g. from
-    ``actinn_jax.embed.scprint_embed``). Everything here is CPU; the embedding is the
-    only step that may want a GPU and is done beforehand.
+    Provide either ``embeddings`` (a per-cell array aligned to ``ref`` — the hierarchy is
+    discovered from it) or a precomputed ``hierarchy`` dict ``{cell_type: group}`` (e.g.
+    discovered from a QC-filtered embedding whose cells no longer align 1:1 to ``ref``).
+    Any label in ``ref`` missing from ``hierarchy`` is placed in a catch-all group.
+    Everything here is CPU; the embedding is the only step that may want a GPU.
     """
     ref = _load_adata(ref)
     labels = ref.obs[label_key].astype(str).to_numpy()
-    grp = discover_hierarchy(embeddings, labels, n_groups)
+    if hierarchy is not None:
+        grp = dict(hierarchy)
+    elif embeddings is not None:
+        grp = discover_hierarchy(embeddings, labels, n_groups)
+    else:
+        raise ValueError("provide either embeddings or a precomputed hierarchy")
+    for t in set(labels) - set(grp):          # labels not covered by the hierarchy
+        grp[t] = "_unmapped"
     ref.obs["_coarse"] = [grp[t] for t in labels]
     coarse = train_reference(ref, train_label_name="_coarse", **train_kwargs)
     fine = {}

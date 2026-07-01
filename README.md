@@ -8,16 +8,34 @@ on a labeled reference dataset, then annotate any query dataset.
 A **two-stage workflow**: a foundation model (scPRINT) is used *once, offline* to
 discover a coarse→fine cell-type hierarchy in a reference; a small actinn-jax model
 trained on it then annotates new data in **milliseconds on a CPU — no GPU, no scPRINT
-at inference**. A pre-trained broad-human reference (Tabula Sapiens, ~180 cell types
-across ~25 organs) ships with the package, so unknown data works out of the box:
+at inference**. A pre-trained broad-human reference sampled across the **whole CELLxGENE
+census** (**~800 cell types, 314 tissues, 440 datasets** — the breadth scPRINT itself was
+trained on) ships with the package, so unknown data works out of the box:
 
 ```python
 import scanpy as sc, actinn_jax as aj
 
-adata = sc.read_h5ad("my_human_data.h5ad")          # raw counts
-model = aj.bundled_reference("broad_human_v1")       # pre-trained, CPU-only
-adata = aj.annotate(adata, model)                    # -> obs['celltype', _coarse, _probability]
+adata = sc.read_h5ad("my_human_data.h5ad")           # raw counts
+model = aj.bundled_reference("broad_human_v1")        # pre-trained, CPU-only, ~800 types
+adata = aj.annotate(adata, model, min_prob=0.5)       # -> obs['celltype', _coarse, _probability]
 ```
+
+`min_prob` is an **abstain threshold**: cells whose confidence is below it are labeled
+`"unknown"` instead of being force-mapped to the nearest reference type — so genuinely
+novel cell types get flagged rather than mislabeled. Held-out calibration (10% of cell
+types held out entirely as out-of-distribution):
+
+| `min_prob` | accuracy (kept) | coverage | OOD flagged as unknown |
+|-----------:|----------------:|---------:|-----------------------:|
+| 0.0 (off)  | 0.55            | 100%     | 0%                     |
+| 0.5        | 0.80            | 46%      | 75%                    |
+| 0.7        | 0.86            | 30%      | 88%                    |
+
+Breadth vs. precision is a deliberate trade: ~800-way annotation from a small per-type
+sample is far harder than a narrow atlas (many near-duplicate subtypes, e.g. cortical
+neuron layers), so raw accuracy is lower than a focused reference — the abstain threshold
+recovers precision on the cells it keeps. For a narrower, higher-accuracy reference on
+your own cell types, build one (below).
 
 Or from the command line:
 

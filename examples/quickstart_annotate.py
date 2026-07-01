@@ -17,12 +17,17 @@ def main(path):
     adata = sc.read_h5ad(path)
     print(f"loaded {adata.shape}")
 
-    model = aj.bundled_reference("broad_human_v1")     # pre-trained, CPU-only
-    adata = aj.annotate(adata, model)                  # adds obs['celltype', _coarse, _probability]
+    model = aj.bundled_reference("broad_human_v1")     # pre-trained, CPU-only, ~800 types
+    # min_prob is an abstain threshold: cells below it are labeled "unknown" instead of
+    # being force-mapped to a reference type (recommended for out-of-distribution data).
+    # 0.5 keeps high-confidence calls; lower it for more coverage, raise it for precision.
+    adata = aj.annotate(adata, model, min_prob=0.5)    # adds obs['celltype', _coarse, _probability]
 
     cols = ["celltype", "celltype_coarse", "celltype_probability"]
     print(adata.obs[cols].head(10).to_string())
-    print("\ntop predicted cell types:")
+    n_unknown = (adata.obs["celltype"] == "unknown").sum()
+    print(f"\n{n_unknown}/{adata.n_obs} cells below threshold -> 'unknown'")
+    print("top predicted cell types:")
     print(adata.obs["celltype"].value_counts().head(15).to_string())
 
     out = path.rsplit(".h5ad", 1)[0] + "_annotations.csv"
