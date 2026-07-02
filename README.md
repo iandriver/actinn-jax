@@ -52,10 +52,13 @@ model = aj.build_hierarchical_reference(ref_adata, "cell_type", emb)
 model.save("my_reference")                                         # then annotate on CPU
 ```
 
-**Runnable notebook with timing:**
+**Runnable notebooks:**
 [`examples/annotate_with_timing.ipynb`](examples/annotate_with_timing.ipynb) annotates a
 65k-cell human lung atlas end-to-end — load, throughput (cells/s), exact vs
-**ontology-aware** concordance, and the abstain sweep. See also
+**ontology-aware** concordance, and the abstain sweep.
+[`examples/liver_zonation.ipynb`](examples/liver_zonation.ipynb) shows **fine-label
+mapping around hepatocyte zonation** — mapping a liver dataset onto the portal→mid→central
+axis, with a confusion heatmap and ordinal (within-1-zone) scoring. See also
 [`examples/quickstart_annotate.py`](examples/quickstart_annotate.py) and
 [`examples/build_reference.py`](examples/build_reference.py). The *why* —
 accuracy/speed/memory benchmarks and the design rationale — lives in the companion
