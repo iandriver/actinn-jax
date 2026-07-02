@@ -48,11 +48,13 @@ def discover_hierarchy(embeddings, labels, n_groups=8):
 class HierarchicalReferenceModel:
     """A coarse ReferenceModel + one fine ReferenceModel per coarse group."""
 
-    def __init__(self, coarse, fine, type_to_group, classes):
+    def __init__(self, coarse, fine, type_to_group, classes, class_to_cl=None):
         self.coarse = coarse                  # ReferenceModel over coarse groups
         self.fine = fine                      # {group: ReferenceModel | single-label str}
         self.type_to_group = dict(type_to_group)
         self.classes = list(classes)
+        # optional {cell_type_name: Cell-Ontology id} for ontology-aware roll-up/eval
+        self.class_to_cl = dict(class_to_cl) if class_to_cl else {}
 
     def predict_frame(self, adata, use_raw="auto", chunk_size=50000, min_prob=None):
         """Coarse-predict, route each cell to its group's fine model, return a frame.
@@ -106,7 +108,7 @@ class HierarchicalReferenceModel:
                 fine_manifest[g] = {"single_label": None}
         with open(os.path.join(path, "manifest.json"), "w") as fh:
             json.dump({"type_to_group": self.type_to_group, "classes": self.classes,
-                       "fine": fine_manifest}, fh)
+                       "class_to_cl": self.class_to_cl, "fine": fine_manifest}, fh)
         return path
 
     @classmethod
@@ -118,11 +120,12 @@ class HierarchicalReferenceModel:
         for g, info in man["fine"].items():
             fine[g] = (info["single_label"] if info["single_label"] is not None
                        else ReferenceModel.load(os.path.join(path, f"fine_{g}")))
-        return cls(coarse, fine, man["type_to_group"], man["classes"])
+        return cls(coarse, fine, man["type_to_group"], man["classes"],
+                   class_to_cl=man.get("class_to_cl"))
 
 
 def build_hierarchical_reference(ref, label_key, embeddings=None, n_groups=8,
-                                 hierarchy=None, **train_kwargs):
+                                 hierarchy=None, ontology_key=None, **train_kwargs):
     """Build a HierarchicalReferenceModel from a labeled reference.
 
     Provide either ``embeddings`` (a per-cell array aligned to ``ref`` — the hierarchy is
@@ -149,7 +152,12 @@ def build_hierarchical_reference(ref, label_key, embeddings=None, n_groups=8,
         gtypes = sub.obs[label_key].unique()
         fine[g] = (str(gtypes[0]) if len(gtypes) == 1
                    else train_reference(sub.copy(), train_label_name=label_key, **train_kwargs))
-    return HierarchicalReferenceModel(coarse, fine, grp, sorted(set(labels)))
+    class_to_cl = None
+    if ontology_key is not None and ontology_key in ref.obs:
+        class_to_cl = {str(t): str(c) for t, c in
+                       zip(labels, ref.obs[ontology_key].astype(str))}
+    return HierarchicalReferenceModel(coarse, fine, grp, sorted(set(labels)),
+                                      class_to_cl=class_to_cl)
 
 
 def annotate(query, model, output_label_name="celltype", **kwargs):

@@ -52,8 +52,13 @@ model = aj.build_hierarchical_reference(ref_adata, "cell_type", emb)
 model.save("my_reference")                                         # then annotate on CPU
 ```
 
-See [`examples/`](examples) for both. The *why* — accuracy/speed/memory benchmarks and
-the design rationale — lives in the companion
+**Runnable notebook with timing:**
+[`examples/annotate_with_timing.ipynb`](examples/annotate_with_timing.ipynb) annotates a
+65k-cell human lung atlas end-to-end — load, throughput (cells/s), exact vs
+**ontology-aware** concordance, and the abstain sweep. See also
+[`examples/quickstart_annotate.py`](examples/quickstart_annotate.py) and
+[`examples/build_reference.py`](examples/build_reference.py). The *why* —
+accuracy/speed/memory benchmarks and the design rationale — lives in the companion
 [actinn-jax-benchmark](https://github.com/iandriver/actinn-jax-benchmark) repo
 ([model-flow mini-paper](https://github.com/iandriver/actinn-jax-benchmark/blob/main/docs/MODEL_FLOW.md)).
 
