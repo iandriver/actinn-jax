@@ -58,6 +58,31 @@ def test_build_from_precomputed_hierarchy():
     assert (out.obs["pred"].values == out.obs["celltype"].values).mean() > 0.7
 
 
+def test_refine_to_query_drops_absent_keeps_present():
+    """refine_to_query on a query missing most of the reference's types should keep
+    every type genuinely present (no false negatives) and drop unevidenced ones."""
+    train = make_adata(n_types=8, n_per_type=60, seed=1)
+    query_full = make_adata(n_types=8, n_per_type=40, seed=2)
+    present = {"type_0", "type_1", "type_2"}
+    query = query_full[query_full.obs["celltype"].isin(present)].copy()
+    emb = _embeddings_from_labels(train, dim=16)
+
+    model = aj.build_hierarchical_reference(train, "celltype", emb, n_groups=4,
+                                            print_cost=False)
+    refined = aj.refine_to_query(model, query)
+    kept = set().union(*refined.allowed_classes.values()) if refined.allowed_classes else set()
+
+    assert present <= kept, f"dropped a present type: {present - kept}"
+    absent = set(model.classes) - present
+    assert not (absent & kept), f"kept an absent type: {absent & kept}"
+
+    out = refined.predict(query.copy(), output_label_name="pred")
+    acc = (out.obs["pred"].values == out.obs["celltype"].values).mean()
+    assert acc > 0.85
+    # renormalized probabilities are still valid probabilities
+    assert (out.obs["pred_probability"] >= 0).all() and (out.obs["pred_probability"] <= 1).all()
+
+
 def test_abstain_threshold():
     """min_prob relabels low-confidence calls as 'unknown' (OOD abstain)."""
     train = make_adata(n_types=6, seed=1)

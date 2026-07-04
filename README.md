@@ -52,6 +52,25 @@ model = aj.build_hierarchical_reference(ref_adata, "cell_type", emb)
 model.save("my_reference")                                         # then annotate on CPU
 ```
 
+**`refine_to_query`** masks the broad reference down to just the classes your query's own
+predictions actually support (no ground truth, no retraining, sub-second):
+
+```python
+refined = aj.refine_to_query(model, adata)
+adata = aj.annotate(adata, refined)
+```
+
+Measured on real data (see
+[actinn-jax-benchmark's REFINE.md](https://github.com/iandriver/actinn-jax-benchmark/blob/main/docs/REFINE.md)):
+this is a safe, free pruning pass — it reliably protects real types and never made
+accuracy worse in testing — but it's **not a fix** for the large-reference accuracy gap.
+The classes actually causing confusion are the model's genuinely-confusable siblings of
+real types, and they carry the same confidence signature as real rare ones, so no
+threshold built from the classifier's own output cleanly separates them. **Retraining on
+a narrower, focused reference (`build_reference.py` above) is the reliable way to close
+that gap** — it measurably outperforms masking because it reshapes the decision boundary
+rather than restricting a frozen one's candidate set.
+
 **Runnable notebooks:**
 [`examples/annotate_with_timing.ipynb`](examples/annotate_with_timing.ipynb) annotates a
 65k-cell human lung atlas end-to-end — load, throughput (cells/s), exact vs

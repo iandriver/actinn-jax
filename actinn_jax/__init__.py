@@ -2,7 +2,7 @@
 
 __author__ = 'Ian Driver'
 __email__ = 'driver.ian@gmail.com'
-__version__ = '0.2.0'
+__version__ = '0.3.0'
 
 
 from . import actinn_utils
@@ -20,6 +20,9 @@ from .hierarchy import (
     build_hierarchical_reference,
     annotate,
     bundled_reference,
+    RefinedReference,
+    detect_present_classes,
+    refine_to_query,
 )
 
 __all__ = [
@@ -36,4 +39,8 @@ __all__ = [
     "build_hierarchical_reference",
     "annotate",
     "bundled_reference",
+    # query-adaptive refinement
+    "RefinedReference",
+    "detect_present_classes",
+    "refine_to_query",
 ]
