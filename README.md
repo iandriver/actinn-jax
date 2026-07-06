@@ -71,6 +71,25 @@ a narrower, focused reference (`build_reference.py` above) is the reliable way t
 that gap** — it measurably outperforms masking because it reshapes the decision boundary
 rather than restricting a frozen one's candidate set.
 
+## Focused reference: liver (HLiCA)
+
+`liver_hlica_v1` ships a **38-type, 6-lineage liver reference** built from
+[HLiCA](https://doi.org/10.64898/2026.06.30.735539) (Edgar, Portman, Hu et al. 2026),
+a 522,730-cell, 110-donor, expert-curated integrated human liver atlas — including
+hepatocyte and endothelial **zonation** (periportal/pericentral). This is exactly the
+`refine_to_query` → `build_reference.py` recommendation above, executed for real: on a
+held-out study, this focused reference reaches **exact-CL 0.73 / ontology 0.86**, vs.
+**0.23 / 0.58** for the broad 798-type reference on the same cells (see
+[actinn-jax-benchmark's HLICA_LIVER.md](https://github.com/iandriver/actinn-jax-benchmark/blob/main/docs/HLICA_LIVER.md)
+for the full cross-study validation).
+
+```python
+model = aj.bundled_reference("liver_hlica_v1")
+adata = aj.annotate(adata, model)
+```
+
+Data used under CC-BY 4.0; please cite the original paper if you use this reference.
+
 **Runnable notebooks:**
 [`examples/annotate_with_timing.ipynb`](examples/annotate_with_timing.ipynb) annotates a
 65k-cell human lung atlas end-to-end — load, throughput (cells/s), exact vs
