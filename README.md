@@ -73,20 +73,27 @@ rather than restricting a frozen one's candidate set.
 
 ## Focused reference: liver (HLiCA)
 
-`liver_hlica_v1` ships a **38-type, 6-lineage liver reference** built from
+`liver_hlica_v2` ships a **48-type, 7-lineage liver reference** built from
 [HLiCA](https://doi.org/10.64898/2026.06.30.735539) (Edgar, Portman, Hu et al. 2026),
 a 522,730-cell, 110-donor, expert-curated integrated human liver atlas — including
-hepatocyte and endothelial **zonation** (periportal/pericentral). This is exactly the
+hepatocyte and endothelial **zonation** (periportal/pericentral), plasmacytoid dendritic
+cells, and HLiCA's own novel-cell-type findings (NRXN1+ stromal cells, CUX2+ hepatic
+stellate cells, MAMLD1+ trans monocytes, TREM2+ macrophages). This is exactly the
 `refine_to_query` → `build_reference.py` recommendation above, executed for real: on a
-held-out study, this focused reference reaches **exact-CL 0.73 / ontology 0.86**, vs.
+held-out study, this focused reference reaches **exact-CL 0.72 / ontology 0.86**, vs.
 **0.23 / 0.58** for the broad 798-type reference on the same cells (see
 [actinn-jax-benchmark's HLICA_LIVER.md](https://github.com/iandriver/actinn-jax-benchmark/blob/main/docs/HLICA_LIVER.md)
-for the full cross-study validation).
+and
+[HLICA_EDGE_CASES.md](https://github.com/iandriver/actinn-jax-benchmark/blob/main/docs/HLICA_EDGE_CASES.md)
+for the full cross-study validation and how v2 fixed two coverage gaps found by checking
+the paper's own stated edge cases against v1).
 
 ```python
-model = aj.bundled_reference("liver_hlica_v1")
+model = aj.bundled_reference("liver_hlica_v2")
 adata = aj.annotate(adata, model)
 ```
+
+(`liver_hlica_v1`, 38 types, also ships — for anyone who wants the smaller taxonomy.)
 
 Data used under CC-BY 4.0; please cite the original paper if you use this reference.
 
