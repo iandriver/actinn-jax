@@ -39,6 +39,33 @@ def test_save_load_roundtrip(tmp_path):
     assert labels_before == labels_after
 
 
+def test_standardize_stores_scaler_and_roundtrips(tmp_path):
+    train = make_adata(seed=1)
+    query = make_adata(seed=2)
+
+    base = ctp.train_reference(train, train_label_name="celltype",
+                              standardize=False, print_cost=False)
+    std = ctp.train_reference(train, train_label_name="celltype",
+                              standardize=True, print_cost=False)
+
+    # opt-in stores a frozen scaler; default leaves it off
+    assert base.mu is None and base.sd is None
+    assert std.mu is not None and std.sd is not None
+    assert std.mu.shape == std.sd.shape == std.select_idx.shape
+    assert np.all(std.sd > 0)  # zero std guarded to 1.0
+
+    # standardization changes predictions but still classifies the query well
+    a_std, _ = ctp.predict(query, std, output_label_name="celltype_pred")
+    assert _accuracy(a_std) > 0.85
+
+    # scaler survives save/load: identical labels before/after
+    before = std.predict_frame(query)[0]["celltype"].tolist()
+    std.save(str(tmp_path / "std"))
+    reloaded = ctp.ReferenceModel.load(str(tmp_path / "std"))
+    assert reloaded.mu is not None and reloaded.mu.shape == std.mu.shape
+    assert reloaded.predict_frame(query)[0]["celltype"].tolist() == before
+
+
 def test_query_gene_projection_robustness():
     """Shuffled gene order + missing/extra genes must still align correctly."""
     train = make_adata(seed=1)

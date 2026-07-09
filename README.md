@@ -201,12 +201,33 @@ model = aj.train_reference(
 adata, _ = aj.predict(adata, model, chunk_size=50000)
 ```
 
+### Standardization (opt-in accuracy boost)
+
+`standardize=True` z-scores each gene with the reference's frozen mean/std and
+applies the same transform to every query — a cheap domain-alignment into the
+reference feature space (the CPU-transferable idea behind scANVI+scArches).
+Across the Open Problems `label_projection` datasets it lifts mean accuracy
++0.3 pt and macro-F1 +1.1 pt, with the largest gains on batch-shifted and
+fine-grained references (e.g. Tabula Sapiens +1.8 pt accuracy, GTEx macro-F1
++7.9 pt). See `docs/PREPROC_ABLATION.md` in the benchmark repo.
+
+```python
+model = aj.train_reference('reference.h5ad', train_label_name='cell_type',
+                           standardize=True)   # scaler saved with the model
+```
+
+It is **opt-in** (default `False`) because it shifts the softmax probability
+calibration, which the two-stage refine / abstain thresholds are tuned against;
+use it for a one-stage accuracy win, or re-tune those thresholds before combining.
+
 ## How it works
 
 - **Sparse-aware preprocessing** — gene-name matching and intersection happen on
   the sparse matrix; only the shared-gene submatrix is densified.
 - **Normalization** follows ACTINN: per-cell library-size normalize to 1e4,
-  `log2(x+1)`, then expr- and CV-percentile gene filtering.
+  `log2(x+1)`, then expr- and CV-percentile gene filtering. Optional per-gene
+  standardization (`standardize=True`) aligns the query into the reference's
+  feature space for an accuracy boost.
 - **Model** — a 4-layer MLP (100→50→25→n_types), Glorot init, Adam with
   exponential-decay schedule, trained with a JIT-compiled epoch step.
 - **Cached `ReferenceModel`** stores the trained weights, gene set, and label

@@ -87,6 +87,7 @@ def train(
     layer_sizes=LAYER_SIZES,
     seed=DEFAULT_SEED,
     print_cost=True,
+    scale=None,
 ):
     """Train the MLP.
 
@@ -112,6 +113,16 @@ def train(
     n_samples, n_features = X.shape
     n_types = Y.shape[1]
 
+    # Optional per-gene standardization applied per minibatch (after row densification)
+    # so peak memory stays at (batch_size x features): subtracting the mean would
+    # otherwise destroy sparsity and force the whole matrix dense.
+    _sc = None
+    if scale is not None:
+        _mu = np.asarray(scale[0], dtype=np.float32)
+        _sd = np.asarray(scale[1], dtype=np.float32)
+        _sd = np.where(_sd == 0.0, 1.0, _sd)
+        _sc = (_mu, _sd)
+
     params = initialize_parameters(n_features, n_types, layer_sizes, seed)
     optimizer = optax.adam(_make_schedule(starting_learning_rate))
     opt_state = optimizer.init(params)
@@ -127,7 +138,10 @@ def train(
 
     def densify(rows):
         xb = X[rows]
-        return np.asarray(xb.toarray() if sparse else xb, dtype=np.float32)
+        xb = np.asarray(xb.toarray() if sparse else xb, dtype=np.float32)
+        if _sc is not None:
+            xb = (xb - _sc[0]) / _sc[1]
+        return xb
 
     key = jax.random.PRNGKey(seed)
     for epoch in range(num_epochs):
