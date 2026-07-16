@@ -130,7 +130,9 @@ novel-cell-type discovery (Montoro/Plasschaert) — then ran `detect_novel_cellt
 confidence, median 0.30; the reference would have mislabeled them "B cell"), and the
 recovered markers were led by **ASCL3** (the ionocyte master transcription factor) and
 **ATP6V0B** (the V-ATPase subunit ionocytes are named for). Raising `min_cells` above 22
-correctly drops the flag — the knob does what it says. See
+correctly drops the flag — the knob does what it says. The full walkthrough (with the
+t-SNE highlight of the flagged population) is in
+[`examples/novel_celltypes.ipynb`](examples/novel_celltypes.ipynb); a script version is
 [`examples/detect_novel_celltypes.py`](examples/detect_novel_celltypes.py).
 
 ## Focused reference: liver (HLiCA)
