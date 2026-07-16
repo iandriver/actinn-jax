@@ -4,6 +4,7 @@ import os
 
 import numpy as np
 import pandas as pd
+import pytest
 
 import actinn_jax as ctp
 from conftest import make_adata
@@ -22,6 +23,51 @@ def test_train_reference_and_predict_accuracy():
 
     assert "celltype_pred" in adata.obs
     assert "celltype_pred_probability" in adata.obs
+    assert _accuracy(adata) > 0.85
+
+
+def test_gene_id_mismatch_raises_clear_error():
+    """A query whose gene ids don't match the reference (and has no usable .var
+    column to fall back to) must fail loudly, not silently emit one constant
+    label (the Ensembl-vs-symbol footgun)."""
+    train = make_adata(seed=1)
+    query = make_adata(seed=2)
+    # Rename every query gene so nothing overlaps the reference's gene set.
+    query.var_names = ["MISMATCH_" + g for g in query.var_names]
+
+    model = ctp.train_reference(train, train_label_name="celltype", print_cost=False)
+    with pytest.raises(ValueError, match="gene-identifier mismatch"):
+        ctp.predict(query, model, output_label_name="celltype_pred")
+
+
+def test_auto_matches_gene_ids_from_var_column():
+    """If var_names don't match but a .var column does, prediction should fall
+    back to that column automatically (by default) and annotate correctly."""
+    train = make_adata(seed=1)
+    query = make_adata(seed=2)
+    # Stash the real (matching) ids in a column, then scramble var_names.
+    query.var["ensembl_id"] = list(query.var_names)
+    query.var_names = ["SYMBOL_%d" % i for i in range(query.n_vars)]
+
+    model = ctp.train_reference(train, train_label_name="celltype", print_cost=False)
+    with pytest.warns(UserWarning, match="ensembl_id"):
+        adata, _ = ctp.predict(query, model, output_label_name="celltype_pred")
+    # Auto-matching recovers the signal, so accuracy matches the aligned case.
+    assert _accuracy(adata) > 0.85
+
+
+def test_matching_var_names_are_left_untouched():
+    """When var_names already match the reference, no fallback/warning fires."""
+    import warnings
+
+    train = make_adata(seed=1)
+    query = make_adata(seed=2)
+    query.var["ensembl_id"] = ["DECOY_%d" % i for i in range(query.n_vars)]
+
+    model = ctp.train_reference(train, train_label_name="celltype", print_cost=False)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # any spurious remap warning would raise
+        adata, _ = ctp.predict(query, model, output_label_name="celltype_pred")
     assert _accuracy(adata) > 0.85
 
 

@@ -191,6 +191,30 @@ Apple Silicon an experimental GPU backend is available via `uv pip install -e .[
 picks the raw counts automatically. Genes are matched by `var_names`
 (case-insensitive); the reference and query must share gene-name format.
 
+### Gene identifiers are matched automatically
+
+Genes are matched by identifier, so query and reference must use the **same
+identifier type**. The bundled references (`broad_human_v1`, `liver_hlica_v2`, …)
+are keyed by **Ensembl gene IDs** (`ENSG…`). **You usually don't need to do
+anything:** if your query's `var_names` are gene **symbols** (`A1BG`, `CD3D`, …)
+and don't match, `actinn-jax` automatically falls back to the best-matching
+`.var` column (`Ensembl_id`, `gene_ids`, `feature_id`, …) and prints a one-line
+notice of which column it used.
+
+If no identifier matches at all (neither `var_names` nor any `.var` column), it
+raises a clear error rather than silently returning **one constant label** for
+every cell (the classic symptom of an unmatched gene set). To force a specific
+identifier yourself:
+
+```python
+adata.var_names = adata.var['Ensembl_id'].astype(str).values   # or 'gene_ids', etc.
+adata.var_names_make_unique()
+adata = aj.annotate(adata, model)
+```
+
+(Symbol-keyed references work fine too — just make the *query* resolvable to the
+*reference*. Check overlap with `set(adata.var_names) & set(model.coarse.norm_genes)`.)
+
 ## Usage
 
 ### One-off: train and predict in a single call

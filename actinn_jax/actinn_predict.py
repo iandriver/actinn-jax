@@ -16,6 +16,7 @@ materialised as dense for normalization.
 
 import json
 import os
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -56,19 +57,76 @@ def _resolve_matrix(adata, use_raw):
     return adata.X, pd.Index(adata.var_names)
 
 
-def _extract(adata, label_name=None, use_raw="auto"):
+def _extract(adata, label_name=None, use_raw="auto", gene_names=None):
     """Pull counts + de-duplicated upper-cased gene names (and labels) from AnnData.
 
     Gene names are upper-cased and de-duplicated (first occurrence kept) using
-    vectorized pandas ops -- no Python loops. Returns ``(csr, gene_index, labels)``.
+    vectorized pandas ops -- no Python loops. ``gene_names`` optionally overrides
+    the gene identifiers (e.g. an Ensembl-ID column chosen to match a reference);
+    it must align with the matrix's gene axis. Returns ``(csr, gene_index, labels)``.
     """
     X, genes = _resolve_matrix(adata, use_raw)
-    genes = genes.str.upper()
+    if gene_names is not None:
+        genes = pd.Index(gene_names)
+    genes = genes.astype(str).str.upper()
     keep = ~genes.duplicated(keep="first")
     X = _as_csr(X)[:, np.asarray(keep)]
     genes = genes[keep]
     labels = None if label_name is None else np.asarray(adata.obs[label_name].values)
     return X, genes, labels
+
+
+# Common ``.var`` columns that hold an alternative gene identifier (Ensembl IDs or
+# symbols). Tried, in order, when the query's var_names don't match the reference.
+_GENE_ID_COLUMNS = (
+    "ensembl_id", "ensembl", "ensemblid", "gene_ids", "gene_id", "geneid",
+    "feature_id", "feature_name", "gene_name", "gene_symbol", "symbol",
+    "gene", "genes", "features",
+)
+
+
+def _var_frame(adata, use_raw):
+    """Return the ``.var`` DataFrame matching the matrix ``_resolve_matrix`` uses."""
+    if use_raw == "auto":
+        use_raw = adata.raw is not None
+    return adata.raw.var if use_raw else adata.var
+
+
+def _candidate_gene_ids(adata, use_raw):
+    """Yield ``(name, pd.Index)`` gene-identifier candidates: the current var_names
+    first, then any plausible ``.var`` column (case-insensitive name match)."""
+    var = _var_frame(adata, use_raw)
+    yield "var_names", pd.Index(var.index)
+    seen, lower = set(), {c.lower(): c for c in var.columns}
+    for key in _GENE_ID_COLUMNS:
+        col = lower.get(key)
+        if col is not None and col not in seen:
+            seen.add(col)
+            yield col, pd.Index(var[col].astype(str).values)
+
+
+def _select_gene_ids(adata, ref_genes, use_raw):
+    """Pick the gene identifier that best matches ``ref_genes``, but only switch
+    away from var_names when var_names is inadequate and a column clears the floor.
+
+    Returns ``(column_name, pd.Index)`` to override with, or ``(None, None)`` when
+    the existing var_names should be used as-is (already adequate, or nothing
+    better available). This is the default gene-matching pass for prediction.
+    """
+    ref = set(str(g).upper() for g in ref_genes)
+    floor = min(MIN_SHARED_GENES, max(1, len(ref) // 2))
+    overlap = lambda idx: int(idx.astype(str).str.upper().isin(ref).sum())
+
+    cands = list(_candidate_gene_ids(adata, use_raw))
+    cur_ov = overlap(cands[0][1])                     # var_names is always first
+    if cur_ov >= floor:
+        return None, None                             # already fine -- don't touch
+    best = max(cands[1:], key=lambda c: overlap(c[1]), default=None)
+    if best is not None:
+        best_ov = overlap(best[1])
+        if best_ov > cur_ov and best_ov >= floor:
+            return best[0], best[1]
+    return None, None
 
 
 def _normalize(X):
@@ -182,13 +240,66 @@ class ReferenceModel:
             feats = (feats - self.mu) / self.sd
         return feats
 
-    def predict_proba(self, adata, use_raw="auto", chunk_size=50000):
+    def _check_gene_overlap(self, genes):
+        """Guard against silent degeneracy from a gene-identifier mismatch.
+
+        If the query shares almost no genes with the reference (e.g. the query
+        uses symbols while the reference uses Ensembl IDs), every cell projects
+        to a near-zero vector and the model emits one constant label. Raise a
+        clear, actionable error in that case; warn on merely low overlap.
+        """
+        ref = pd.Index([str(g).upper() for g in self.norm_genes])
+        shared = int(ref.isin(genes).sum())
+        # Absolute floor for large references, but never require more than half
+        # of a small reference's genes (some references are intentionally small).
+        floor = min(MIN_SHARED_GENES, max(1, len(ref) // 2))
+        if shared < floor:
+            ex_ref = ", ".join(map(str, self.norm_genes[:3]))
+            ex_qry = ", ".join(map(str, list(genes[:3])))
+            raise ValueError(
+                f"Query shares only {shared} of the reference's {len(ref)} genes "
+                f"({shared} < {floor}) -- too few to annotate. This is "
+                "almost always a gene-identifier mismatch: the reference is keyed "
+                f"by e.g. [{ex_ref}] but the query var_names look like [{ex_qry}]. "
+                "Set adata.var_names to the matching identifier (e.g. "
+                "`adata.var_names = adata.var['Ensembl_id']`) before annotating."
+            )
+        if shared < 0.25 * len(ref):
+            warnings.warn(
+                f"Query shares only {shared}/{len(ref)} reference genes "
+                f"({100 * shared / len(ref):.0f}%); predictions may be unreliable. "
+                "Check that query and reference use the same gene identifiers.",
+                stacklevel=3,
+            )
+
+    def _match_gene_ids(self, adata, use_raw):
+        """Default gene-matching pass: if the query's var_names don't match the
+        reference (e.g. symbols vs Ensembl IDs), transparently fall back to the
+        best-matching ``.var`` column. Returns the ``gene_names`` override for
+        ``_extract`` (or ``None`` to keep var_names)."""
+        col, idx = _select_gene_ids(adata, self.norm_genes, use_raw)
+        if col is not None:
+            warnings.warn(
+                f"actinn-jax: query var_names matched few reference genes; using "
+                f"adata.var['{col}'] instead (better overlap with the reference).",
+                stacklevel=3,
+            )
+        return idx
+
+    def predict_proba(self, adata, use_raw="auto", chunk_size=50000,
+                      gene_names=None, _skip_match=False):
         """Softmax probabilities ``(n_cells, n_types)``, computed in cell chunks.
 
         Chunking bounds peak memory so atlas-scale queries (hundreds of thousands
-        of cells) never materialise as one giant dense matrix.
+        of cells) never materialise as one giant dense matrix. Gene identifiers are
+        matched to the reference automatically (var_names, else a ``.var`` column);
+        callers that already resolved the identifier pass ``gene_names`` and
+        ``_skip_match=True`` to avoid re-resolving (and re-warning) per sub-model.
         """
-        X, genes, _ = _extract(adata, use_raw=use_raw)
+        if gene_names is None and not _skip_match:
+            gene_names = self._match_gene_ids(adata, use_raw)
+        X, genes, _ = _extract(adata, use_raw=use_raw, gene_names=gene_names)
+        self._check_gene_overlap(genes)
         n = X.shape[0]
         out = np.empty((n, len(self.classes)), dtype=np.float32)
         for start in range(0, n, chunk_size):
