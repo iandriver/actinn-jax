@@ -99,6 +99,40 @@ refined = aj.refine_to_query(model, adata, tissue='liver')     # tissue='auto' r
 Common synonyms (`PBMC`→blood, `hepatic`→liver, …) are recognized; a tissue not in the
 reference's vocabulary, or a reference with no tissue map, simply imposes no filter.
 
+## Finding novel / unknown cell types
+
+A cell type the reference has never seen doesn't show up as a few scattered uncertain
+cells — it shows up as a **coherent group the reference can't confidently explain**.
+`detect_novel_celltypes` looks for exactly that: clusters that are both large enough to
+be a real population and predominantly low-confidence. (This is cluster-level rejection —
+distinct from the per-cell `min_prob` abstain, which flags individual uncertain cells.)
+
+```python
+evidence, markers = aj.detect_novel_celltypes(
+    model, adata,
+    cluster_key='leiden',   # your clustering; omit to auto-cluster (needs leidenalg)
+    min_cells=10,           # size floor for calling something novel — lower to go rarer
+)
+evidence[evidence.novel]    # candidate novel populations, most-suspect first
+markers['novel_1']          # its top marker genes (vs the rest of the dataset)
+adata.obs['novel']          # 'novel_1'… on flagged cells, '' otherwise
+```
+
+`min_cells` is the tunable **minimum population size** — the default (10) separates a real
+novel type from noise/doublets; lower it (`min_cells=5`) to surface rarer candidates, raise
+it to be stricter. `evidence` also reports each cluster's `nearest_label` (what the
+reference *would* have called it) and `frac_low_conf`.
+
+**Validated on a real discovery.** In the Krasnow *et al.* (2020) human lung atlas we
+trained a reference but **withheld the pulmonary ionocyte** — itself a landmark 2018
+novel-cell-type discovery (Montoro/Plasschaert) — then ran `detect_novel_celltypes`. Of all
+57 populations, the 22 withheld ionocytes were the **only** cluster flagged (86% low
+confidence, median 0.30; the reference would have mislabeled them "B cell"), and the
+recovered markers were led by **ASCL3** (the ionocyte master transcription factor) and
+**ATP6V0B** (the V-ATPase subunit ionocytes are named for). Raising `min_cells` above 22
+correctly drops the flag — the knob does what it says. See
+[`examples/detect_novel_celltypes.py`](examples/detect_novel_celltypes.py).
+
 ## Focused reference: liver (HLiCA)
 
 `liver_hlica_v2` ships a **48-type, 7-lineage liver reference** built from

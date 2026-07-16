@@ -25,6 +25,7 @@ from .hierarchy import (
     refine_to_query,
     refine_to_tissue,
 )
+from .novelty import detect_novel_celltypes
 
 __all__ = [
     "actinn_utils",
@@ -45,4 +46,6 @@ __all__ = [
     "detect_present_classes",
     "refine_to_query",
     "refine_to_tissue",
+    # novel cell-type discovery
+    "detect_novel_celltypes",
 ]
