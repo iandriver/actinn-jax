@@ -96,3 +96,81 @@ def test_abstain_threshold():
     # with no threshold, nothing is forced to unknown by abstain
     frame0 = model.predict_frame(query, min_prob=0.0)[0]
     assert (frame0["celltype"] == "unknown").mean() < 0.5
+
+
+# --------------------------------------------------------------------------- #
+# Tissue-aware refinement
+# --------------------------------------------------------------------------- #
+def _tissue_model(seed=1):
+    """A small hierarchical model with a hand-set class_to_tissue map."""
+    train = make_adata(n_types=6, seed=seed)
+    emb = _embeddings_from_labels(train)
+    model = aj.build_hierarchical_reference(train, "celltype", emb, n_groups=3,
+                                            print_cost=False)
+    t = sorted(model.classes)             # type_0 .. type_5
+    model.class_to_tissue = {
+        t[0]: ["liver"], t[1]: ["lung"], t[2]: ["*"], t[3]: ["liver", "lung"],
+        # t[4], t[5] intentionally unmapped -> always allowed
+    }
+    return model, t
+
+
+def _allowed_names(refined):
+    return set().union(*refined.allowed_classes.values()) if refined.allowed_classes else set()
+
+
+def test_refine_to_tissue_prunes_wrong_tissue():
+    model, t = _tissue_model()
+    allowed = _allowed_names(aj.refine_to_tissue(model, tissue="liver"))
+    assert t[0] in allowed            # liver-specific kept
+    assert t[1] not in allowed        # lung-specific pruned
+    assert t[2] in allowed            # pan-tissue ("*") kept
+    assert t[3] in allowed            # multi-tissue incl. liver kept
+    assert t[4] in allowed and t[5] in allowed   # unmapped -> always allowed
+
+
+def test_refine_to_tissue_synonym_and_predict():
+    train = make_adata(n_types=6, seed=1)
+    emb = _embeddings_from_labels(train)
+    model = aj.build_hierarchical_reference(train, "celltype", emb, n_groups=3,
+                                            print_cost=False)
+    t = sorted(model.classes)
+    model.class_to_tissue = {t[0]: ["liver"], t[1]: ["lung"], t[2]: ["*"],
+                             t[3]: ["blood"], t[4]: ["liver"], t[5]: ["blood"]}
+    query = make_adata(n_types=6, seed=2)
+    # 'PBMC' -> blood; only pan-tissue and blood-specific types survive.
+    out = aj.refine_to_tissue(model, tissue="PBMC").predict(query, output_label_name="p")
+    assert set(out.obs["p"]).issubset({t[2], t[3], t[5]})
+
+
+def test_refine_to_tissue_auto_from_obs():
+    model, t = _tissue_model()
+    query = make_adata(n_types=6, seed=2)
+    query.obs["tissue"] = "liver"
+    allowed = _allowed_names(aj.refine_to_tissue(model, adata=query))   # tissue=None -> auto
+    assert t[0] in allowed and t[1] not in allowed
+
+
+def test_refine_to_query_composes_with_tissue():
+    model, t = _tissue_model()
+    query = make_adata(n_types=6, seed=2)
+    refined = aj.refine_to_query(model, query, tissue="liver")
+    allowed = _allowed_names(refined)
+    assert t[1] not in allowed        # lung-specific never survives a liver filter
+
+
+def test_tissue_map_roundtrips(tmp_path):
+    model, _ = _tissue_model()
+    model.save(str(tmp_path / "h"))
+    reloaded = aj.HierarchicalReferenceModel.load(str(tmp_path / "h"))
+    assert reloaded.class_to_tissue == model.class_to_tissue
+
+
+def test_refine_to_tissue_noop_without_map():
+    """A model with no tissue map imposes no filter (allowed_* stay None)."""
+    train = make_adata(n_types=4, seed=1)
+    emb = _embeddings_from_labels(train)
+    model = aj.build_hierarchical_reference(train, "celltype", emb, n_groups=2,
+                                            print_cost=False)
+    refined = aj.refine_to_tissue(model, tissue="liver")
+    assert refined.allowed_groups is None and refined.allowed_classes is None

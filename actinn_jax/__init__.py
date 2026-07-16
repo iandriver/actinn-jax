@@ -23,6 +23,7 @@ from .hierarchy import (
     RefinedReference,
     detect_present_classes,
     refine_to_query,
+    refine_to_tissue,
 )
 
 __all__ = [
@@ -43,4 +44,5 @@ __all__ = [
     "RefinedReference",
     "detect_present_classes",
     "refine_to_query",
+    "refine_to_tissue",
 ]

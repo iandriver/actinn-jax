@@ -71,6 +71,34 @@ a narrower, focused reference (`build_reference.py` above) is the reliable way t
 that gap** — it measurably outperforms masking because it reshapes the decision boundary
 rather than restricting a frozen one's candidate set.
 
+**`refine_to_tissue`** uses a stronger, label-free prior: a sample is (mostly) from one
+tissue, and a liver sample should not be labeled with lung-specific epithelium. It prunes
+the candidate classes to those the CELLxGENE census records in that tissue, while keeping
+**pan-tissue** types (immune, endothelial, stromal) available everywhere — so
+liver-resident T cells and macrophages are unaffected. The broad reference ships with a
+per-class tissue map (`tissue_general` from ~62 M census cells) baked in, so this is
+offline and instant:
+
+```python
+refined = aj.refine_to_tissue(model, tissue='liver')   # or ['liver','blood'] for mixed
+adata = aj.annotate(adata, refined)
+# or read the tissue from adata.obs['tissue'/'tissue_general'] automatically:
+refined = aj.refine_to_tissue(model, adata=adata)      # tissue inferred from obs
+```
+
+On a real liver query this roughly **halves** the label set — it removes the cross-tissue
+misfires (cardiac muscle, alveolar fibroblast, colonocyte, adrenal cortex…) that the broad
+798-type model otherwise scatters in, while leaving hepatocyte / LSEC / stellate counts
+essentially unchanged. It composes with `refine_to_query` (a class must be both evidenced
+*and* tissue-plausible):
+
+```python
+refined = aj.refine_to_query(model, adata, tissue='liver')     # tissue='auto' reads obs
+```
+
+Common synonyms (`PBMC`→blood, `hepatic`→liver, …) are recognized; a tissue not in the
+reference's vocabulary, or a reference with no tissue map, simply imposes no filter.
+
 ## Focused reference: liver (HLiCA)
 
 `liver_hlica_v2` ships a **48-type, 7-lineage liver reference** built from

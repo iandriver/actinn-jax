@@ -14,11 +14,14 @@ coarse classifier plus one fine classifier per coarse group. Annotating new data
 """
 import json
 import os
+import warnings
 
 import numpy as np
 import pandas as pd
 
-from .actinn_predict import ReferenceModel, train_reference, _load_adata
+from .actinn_predict import (
+    ReferenceModel, train_reference, _load_adata, _select_gene_ids,
+)
 
 
 def discover_hierarchy(embeddings, labels, n_groups=8):
@@ -69,13 +72,31 @@ def _masked_argmax(proba, classes, allowed=None):
 class HierarchicalReferenceModel:
     """A coarse ReferenceModel + one fine ReferenceModel per coarse group."""
 
-    def __init__(self, coarse, fine, type_to_group, classes, class_to_cl=None):
+    def __init__(self, coarse, fine, type_to_group, classes, class_to_cl=None,
+                 class_to_tissue=None):
         self.coarse = coarse                  # ReferenceModel over coarse groups
         self.fine = fine                      # {group: ReferenceModel | single-label str}
         self.type_to_group = dict(type_to_group)
         self.classes = list(classes)
         # optional {cell_type_name: Cell-Ontology id} for ontology-aware roll-up/eval
         self.class_to_cl = dict(class_to_cl) if class_to_cl else {}
+        # optional {cell_type_name: [tissue_general, ...]} for tissue-aware refine.
+        # ["*"] means pan-tissue (allowed everywhere); a class absent from the map
+        # is likewise treated as always-allowed. See refine_to_tissue().
+        self.class_to_tissue = dict(class_to_tissue) if class_to_tissue else {}
+
+    def _resolve_gene_ids(self, adata, use_raw):
+        """Resolve the query's gene identifier against the reference once, warning
+        at most once, so the many coarse/fine sub-model calls don't each re-match
+        (and re-warn). Returns the ``gene_names`` override (or ``None``)."""
+        col, idx = _select_gene_ids(adata, self.coarse.norm_genes, use_raw)
+        if col is not None:
+            warnings.warn(
+                f"actinn-jax: query var_names matched few reference genes; using "
+                f"adata.var['{col}'] instead (better overlap with the reference).",
+                stacklevel=3,
+            )
+        return idx
 
     def predict_frame(self, adata, use_raw="auto", chunk_size=50000, min_prob=None,
                        allowed_groups=None, allowed_classes=None):
@@ -91,7 +112,9 @@ class HierarchicalReferenceModel:
         classes are known to be absent from this dataset. ``allowed_classes`` is
         ``{group_id: set(class names)}``.
         """
-        cproba = self.coarse.predict_proba(adata, use_raw=use_raw, chunk_size=chunk_size)
+        gene_names = self._resolve_gene_ids(adata, use_raw)
+        cproba = self.coarse.predict_proba(adata, use_raw=use_raw, chunk_size=chunk_size,
+                                           gene_names=gene_names, _skip_match=True)
         coarse_pred, coarse_prob = _masked_argmax(cproba, self.coarse.classes, allowed_groups)
         out = np.empty(adata.n_obs, dtype=object)
         prob = np.zeros(adata.n_obs, dtype=np.float32)
@@ -108,7 +131,8 @@ class HierarchicalReferenceModel:
                 prob[mask] = coarse_prob[mask]
             else:
                 allowed = allowed_classes.get(str(g)) if allowed_classes else None
-                fproba = fm.predict_proba(adata[mask], use_raw=use_raw, chunk_size=chunk_size)
+                fproba = fm.predict_proba(adata[mask], use_raw=use_raw, chunk_size=chunk_size,
+                                          gene_names=gene_names, _skip_match=True)
                 flab, fprob = _masked_argmax(fproba, fm.classes, allowed)
                 out[mask] = flab
                 prob[mask] = fprob
@@ -141,7 +165,8 @@ class HierarchicalReferenceModel:
                 fine_manifest[g] = {"single_label": None}
         with open(os.path.join(path, "manifest.json"), "w") as fh:
             json.dump({"type_to_group": self.type_to_group, "classes": self.classes,
-                       "class_to_cl": self.class_to_cl, "fine": fine_manifest}, fh)
+                       "class_to_cl": self.class_to_cl,
+                       "class_to_tissue": self.class_to_tissue, "fine": fine_manifest}, fh)
         return path
 
     @classmethod
@@ -154,7 +179,8 @@ class HierarchicalReferenceModel:
             fine[g] = (info["single_label"] if info["single_label"] is not None
                        else ReferenceModel.load(os.path.join(path, f"fine_{g}")))
         return cls(coarse, fine, man["type_to_group"], man["classes"],
-                   class_to_cl=man.get("class_to_cl"))
+                   class_to_cl=man.get("class_to_cl"),
+                   class_to_tissue=man.get("class_to_tissue"))
 
 
 def build_hierarchical_reference(ref, label_key, embeddings=None, n_groups=8,
@@ -220,7 +246,9 @@ def detect_present_classes(model, adata, use_raw="auto", chunk_size=50000,
     evidence : pandas.DataFrame (one row per group/class) with mass, top1_count,
         max_prob, kept — for inspection/tuning.
     """
-    cproba = model.coarse.predict_proba(adata, use_raw=use_raw, chunk_size=chunk_size)
+    gene_names = model._resolve_gene_ids(adata, use_raw)
+    cproba = model.coarse.predict_proba(adata, use_raw=use_raw, chunk_size=chunk_size,
+                                        gene_names=gene_names, _skip_match=True)
     coarse_classes = np.asarray(model.coarse.classes)
     coarse_pred = coarse_classes[np.argmax(cproba, axis=1)]
 
@@ -236,7 +264,8 @@ def detect_present_classes(model, adata, use_raw="auto", chunk_size=50000,
             rows.append({"group": g, "class": fm, "mass": float(mask.sum()),
                          "top1_count": int(mask.sum()), "max_prob": 1.0, "kept": True})
             continue
-        fproba = fm.predict_proba(adata[mask], use_raw=use_raw, chunk_size=chunk_size)
+        fproba = fm.predict_proba(adata[mask], use_raw=use_raw, chunk_size=chunk_size,
+                                  gene_names=gene_names, _skip_match=True)
         classes = np.asarray(fm.classes)
         mass = fproba.sum(axis=0)
         top1 = np.argmax(fproba, axis=1)
@@ -252,6 +281,126 @@ def detect_present_classes(model, adata, use_raw="auto", chunk_size=50000,
                     "max_prob": float(mp), "kept": bool(k)}
                     for c, m, t1, mp, k in zip(classes, mass, top1_count, max_prob, keep))
     return set(allowed_classes), allowed_classes, pd.DataFrame(rows)
+
+
+# --------------------------------------------------------------------------- #
+# Tissue-aware refinement
+# --------------------------------------------------------------------------- #
+# Map common user tissue names onto the census ``tissue_general`` vocabulary.
+_TISSUE_SYNONYMS = {
+    "pbmc": "blood", "peripheral blood": "blood", "whole blood": "blood",
+    "peripheral blood mononuclear cell": "blood",
+    "gut": "intestine", "bowel": "intestine", "cns": "brain",
+    "renal": "kidney", "hepatic": "liver", "pulmonary": "lung", "cardiac": "heart",
+}
+
+
+def _known_tissues(model):
+    """The set of tissue_general categories present in the model's tissue map."""
+    out = set()
+    for v in model.class_to_tissue.values():
+        if v != ["*"]:
+            out.update(v)
+    return out
+
+
+def _normalize_tissue(t, known):
+    """Map a free-text tissue name onto a known tissue_general category, or None."""
+    s = str(t).strip().lower()
+    if s in known:
+        return s
+    if _TISSUE_SYNONYMS.get(s) in known:
+        return _TISSUE_SYNONYMS[s]
+    for k in known:                       # a known category appearing as a word
+        if k == s or k in s.split():
+            return k
+    return None
+
+
+def _infer_tissue(adata):
+    """Read tissue label(s) from ``adata.obs`` (``tissue_general`` or ``tissue``)."""
+    for col in ("tissue_general", "tissue", "Tissue", "organ"):
+        if col in adata.obs:
+            vals = adata.obs[col].astype(str)
+            return [v for v in vals.unique() if v and v.lower() != "nan"]
+    return []
+
+
+def _resolve_tissues(model, tissue, adata):
+    """Return the set of normalized tissue_general categories to filter to, or None.
+
+    ``tissue`` may be a name, a list of names, ``'auto'`` (infer from
+    ``adata.obs``), or ``None`` (no tissue filter).
+    """
+    if not model.class_to_tissue:
+        warnings.warn("actinn-jax: this reference has no tissue map; tissue "
+                      "filtering is a no-op.", stacklevel=3)
+        return None
+    if tissue is None:
+        return None
+    if isinstance(tissue, str) and tissue.lower() == "auto":
+        raw = _infer_tissue(adata) if adata is not None else []
+        if not raw:
+            warnings.warn("actinn-jax: tissue='auto' but no tissue column found in "
+                          "adata.obs; no tissue filter applied.", stacklevel=3)
+            return None
+        warnings.warn(f"actinn-jax: inferred tissue {sorted(set(raw))} from adata.obs.",
+                      stacklevel=3)
+    else:
+        raw = [tissue] if isinstance(tissue, str) else list(tissue)
+    known = _known_tissues(model)
+    norm = {n for n in (_normalize_tissue(t, known) for t in raw) if n}
+    unmatched = [t for t in raw if _normalize_tissue(t, known) is None]
+    if unmatched:
+        warnings.warn(f"actinn-jax: tissue(s) {unmatched} not in the reference's "
+                      "tissue vocabulary; they impose no filter.", stacklevel=3)
+    return norm or None
+
+
+def _tissue_allowed_names(model, tissues):
+    """Class names allowed for ``tissues``: pan-tissue (``['*']``) and unmapped
+    classes always pass; organ-specific classes pass only if one of ``tissues`` is
+    in their recorded set."""
+    allow = set()
+    for c in model.classes:
+        t = model.class_to_tissue.get(c)
+        if t is None or t == ["*"] or any(x in t for x in tissues):
+            allow.add(c)
+    return allow
+
+
+def _names_to_allowed(model, names):
+    """Convert an allowed class-name set into ``(allowed_groups, allowed_classes)``."""
+    allowed_classes = {}
+    for c in names:
+        allowed_classes.setdefault(str(model.type_to_group.get(c)), set()).add(c)
+    return set(allowed_classes), allowed_classes
+
+
+def refine_to_tissue(model, tissue=None, adata=None):
+    """Restrict a broad reference to the cell types plausible in a given tissue.
+
+    A sample is (mostly) from one tissue, and a liver sample should not be labeled
+    with lung-specific epithelium. This prunes the candidate classes to those the
+    census records in ``tissue`` — while keeping pan-tissue types (immune,
+    endothelial, stromal) available everywhere, so liver-resident T cells and
+    macrophages are unaffected. No ground truth, no retraining.
+
+        refined = aj.refine_to_tissue(model, tissue='liver')
+        adata = refined.predict(adata)
+
+    ``tissue`` is a name (or list) from the census ``tissue_general`` vocabulary
+    ('liver', 'lung', 'blood', 'heart', …); common synonyms like 'PBMC'→blood are
+    recognized. If ``tissue`` is None and ``adata`` is given, the tissue is read
+    from ``adata.obs['tissue'/'tissue_general']``.
+    """
+    if tissue is None and adata is not None:
+        tissue = "auto"
+    tissues = _resolve_tissues(model, tissue, adata)
+    if not tissues:
+        return RefinedReference(model, None, None, None)      # no-op filter
+    groups, classes = _names_to_allowed(model, _tissue_allowed_names(model, tissues))
+    return RefinedReference(model, groups, classes, None)
 
 
 class RefinedReference:
@@ -275,7 +424,7 @@ class RefinedReference:
                                   allowed_classes=self.allowed_classes, **kwargs)
 
 
-def refine_to_query(model, adata, use_raw="auto", chunk_size=50000,
+def refine_to_query(model, adata, tissue=None, use_raw="auto", chunk_size=50000,
                     min_mass=1.0, min_top1=1, top1_conf=0.3):
     """Mask a broad reference down to the classes evidenced in ``adata`` — no retraining.
 
@@ -296,10 +445,22 @@ def refine_to_query(model, adata, use_raw="auto", chunk_size=50000,
 
     Tune ``min_mass`` / ``min_top1`` / ``top1_conf`` to trade recall of rare true types
     against how aggressively implausible classes are pruned (defaults favor recall).
+
+    ``tissue`` (optional) additionally restricts to cell types plausible in that
+    tissue (see :func:`refine_to_tissue`): a name/list ('liver', 'lung', …), or
+    ``'auto'`` to read it from ``adata.obs['tissue'/'tissue_general']``. The two
+    filters compose (a class must be both evidenced *and* tissue-plausible). Left
+    ``None`` (default), no tissue filter is applied.
     """
     allowed_groups, allowed_classes, evidence = detect_present_classes(
         model, adata, use_raw=use_raw, chunk_size=chunk_size,
         min_mass=min_mass, min_top1=min_top1, top1_conf=top1_conf)
+    tissues = _resolve_tissues(model, tissue, adata)
+    if tissues:
+        keep = _tissue_allowed_names(model, tissues)
+        allowed_classes = {g: (cs & keep) for g, cs in allowed_classes.items()}
+        allowed_classes = {g: cs for g, cs in allowed_classes.items() if cs}
+        allowed_groups = set(allowed_classes)
     return RefinedReference(model, allowed_groups, allowed_classes, evidence)
 
 
