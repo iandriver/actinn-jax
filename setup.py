@@ -46,6 +46,9 @@ extras_require = {
     # Apple-silicon GPU acceleration (optional): pip install .[metal]
     "metal": ["jax-metal"],
     "test": ["pytest"],
+    # Everything needed to run the example notebooks in examples/ (leidenalg/igraph
+    # also enable the auto-clustering path of detect_novel_celltypes).
+    "notebooks": ["jupyterlab", "ipykernel", "matplotlib", "pronto", "leidenalg", "igraph"],
 }
 
 

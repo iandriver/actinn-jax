@@ -132,21 +132,57 @@ Original ACTINN implementation: https://github.com/mafeiyang/ACTINN
 
 ## Installation
 
+The classifier is a small MLP in JAX — **no TensorFlow dependency** — so a plain
+CPU install works everywhere and needs no special wheels.
+
+### With `uv` (recommended)
+
+[`uv`](https://docs.astral.sh/uv/) resolves the scientific stack (JAX, scanpy) fast
+and pins a compatible Python for you:
+
 ```bash
 git clone https://github.com/iandriver/actinn-jax.git
 cd actinn-jax
-pip install .
+uv venv --python 3.12                 # create .venv on a supported Python
+uv pip install -e .                   # install actinn-jax + deps into it
+source .venv/bin/activate             # (or: `uv run python -c "import actinn_jax"`)
 ```
+
+### With `pip`
+
+```bash
+git clone https://github.com/iandriver/actinn-jax.git
+cd actinn-jax
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -e .
+```
+
+Published builds also install straight from PyPI once released: `pip install actinn-jax`.
+
+### Running the example notebooks
+
+The [`examples/`](examples/) notebooks need a few extra packages (Jupyter,
+matplotlib, the `pronto` ontology reader). Install the `notebooks` extra and
+launch JupyterLab:
+
+```bash
+uv pip install -e ".[notebooks]"      # or: pip install -e ".[notebooks]"
+uv run jupyter lab examples/          # or: jupyter lab examples/
+```
+
+Each notebook has a `QUERY = '...'` line near the top — point it at your own
+`.h5ad` (raw counts). No GPU or extra download is required: the pre-trained
+references ship with the package.
 
 ### Requirements
 
 1. [JAX](https://docs.jax.dev/en/latest/installation.html) — CPU by default, runs everywhere
 2. [scanpy](https://scanpy.readthedocs.io/) / [anndata](https://anndata.readthedocs.io/)
+3. Python 3.10–3.12 (3.13+ may lack JAX/scanpy wheels)
 
-The classifier is a small MLP in JAX — **no TensorFlow dependency**. The model is
-small enough that the **CPU path is fast and is recommended**. On Apple Silicon an
-experimental GPU backend is available via `pip install .[metal]` (installs
-`jax-metal`), but for this model size it is not generally faster than CPU.
+The model is small enough that the **CPU path is fast and is recommended**. On
+Apple Silicon an experimental GPU backend is available via `uv pip install -e .[metal]`
+(installs `jax-metal`), but for this model size it is not generally faster than CPU.
 
 ## Input data
 
@@ -236,7 +272,7 @@ use it for a one-stage accuracy win, or re-tune those thresholds before combinin
 ## Tests & benchmarks
 
 ```bash
-pip install .[test]
+uv pip install -e ".[test]"         # or: pip install -e ".[test]"
 pytest                              # synthetic-data unit tests
 python benchmark/benchmark.py       # timing on synthetic data
 ```
