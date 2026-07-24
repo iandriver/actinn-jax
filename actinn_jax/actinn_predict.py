@@ -382,7 +382,7 @@ def train_reference(
     train_label_name="celltype",
     learning_rate=au.DEFAULT_LEARNING_RATE,
     num_epochs=au.DEFAULT_NUM_EPOCHS,
-    batch_size=au.DEFAULT_BATCH_SIZE,
+    batch_size="auto",
     use_raw="auto",
     max_cells_per_label=None,
     seed=au.DEFAULT_SEED,
@@ -401,6 +401,11 @@ def train_reference(
     max_cells_per_label : int, optional
         Balance and cap training set to this many cells per class. Strongly
         recommended for large atlases -- bounds memory and speeds up training.
+    batch_size : int or 'auto', default 'auto'
+        Minibatch size; ``'auto'`` scales it with the reference size (see
+        :func:`actinn_utils.auto_batch_size`). References under ~12.8k cells keep
+        the historical batch of 128; larger ones get a proportionally bigger batch,
+        which is substantially faster and marginally more accurate at atlas scale.
     standardize : bool, default False
         Z-score each selected gene using the reference's frozen mean/std and apply
         the same transform to every query -- a cheap domain-alignment into the

@@ -154,3 +154,18 @@ def test_celltype_predict_actinn_wrapper(tmp_path):
     assert os.path.exists(tmp_path / "celltype_pred_predicted_label.txt")
     assert os.path.exists(tmp_path / "train_predicted_probabilities.txt")
     assert "W1" in params
+
+
+def test_auto_batch_size_preserves_small_reference_behaviour():
+    """'auto' must not change small references: below ~12.8k cells it stays at 128, so
+    existing results/models are unaffected; above that it scales but is clamped."""
+    from actinn_jax.actinn_utils import auto_batch_size, DEFAULT_BATCH_SIZE
+
+    for n in (100, 1981, 8109, 12_800):          # small/medium -> unchanged
+        assert auto_batch_size(n) == DEFAULT_BATCH_SIZE
+    assert auto_batch_size(25_081) == 250        # scales with reference size
+    assert auto_batch_size(46_911) == 469
+    assert auto_batch_size(5_000_000) == 1024    # clamped at the top
+    # every auto batch keeps a healthy number of gradient steps per epoch
+    for n in (25_081, 46_911, 200_000):
+        assert n // auto_batch_size(n) >= 100
