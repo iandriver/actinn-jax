@@ -1,0 +1,6 @@
+{
+  "name": "liver_hlica_v1",
+  "organism": "homo_sapiens",
+  "source": "HLiCA liver atlas",
+  "note": "provenance recorded retrospectively; this reference predates build_info.json, so no calibration table or corpus sizes"
+}

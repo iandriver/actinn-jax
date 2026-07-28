@@ -1,6 +1,7 @@
 """Tests for the two-stage hierarchical workflow."""
 
 import numpy as np
+import pytest
 
 import actinn_jax as aj
 from conftest import make_adata
@@ -174,3 +175,48 @@ def test_refine_to_tissue_noop_without_map():
                                             print_cost=False)
     refined = aj.refine_to_tissue(model, tissue="liver")
     assert refined.allowed_groups is None and refined.allowed_classes is None
+
+
+# ---- organism awareness -----------------------------------------------------------
+
+def test_infer_organism_from_ensembl_ids():
+    assert aj.infer_organism(["ENSG00000141510", "ENSG00000012048"]) == "homo_sapiens"
+    assert aj.infer_organism(["ENSMUSG00000059552", "ENSMUSG00000017146"]) == "mus_musculus"
+
+
+def test_infer_organism_declines_on_symbols():
+    """Human CD3E and mouse Cd3e differ only by case, which datasets do not apply
+    consistently, so guessing here would be worse than saying nothing."""
+    assert aj.infer_organism(["CD3E", "MS4A1", "PTPRC"]) is None
+    assert aj.infer_organism([]) is None
+
+
+def test_cross_species_query_raises_before_predicting(tmp_path):
+    """A mouse query against a human reference must fail with a message about the
+    organism, not one about gene identifiers that sends the user to fix var_names."""
+    import anndata as ad
+    import pandas as pd
+    import scipy.sparse as sp
+
+    train = make_adata(n_types=4, seed=1)
+    model = aj.build_hierarchical_reference(train, "celltype",
+                                            _embeddings_from_labels(train), n_groups=2,
+                                            print_cost=False)
+    model.build_info = {"organism": "homo_sapiens"}
+    query = ad.AnnData(
+        X=sp.csr_matrix(np.ones((4, 3), dtype="float32")),
+        var=pd.DataFrame(index=["ENSMUSG00000059552", "ENSMUSG00000017146",
+                                "ENSMUSG00000031004"]),
+    )
+    with pytest.raises(ValueError, match="mus_musculus"):
+        model.predict_frame(query)
+
+
+def test_list_references_reports_organism_and_size():
+    refs = aj.list_references()
+    assert refs, "package ships at least one bundled reference"
+    for r in refs:
+        assert {"name", "organism", "n_classes", "size_mb"} <= set(r)
+        assert r["n_classes"] > 0 and r["size_mb"] > 0
+    # every shipped reference must declare its organism, or the guard above cannot fire
+    assert all(r["organism"] for r in refs)

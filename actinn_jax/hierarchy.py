@@ -23,6 +23,24 @@ from .actinn_predict import (
     ReferenceModel, train_reference, _load_adata, _select_gene_ids,
 )
 
+# Ensembl gene-id prefixes are unambiguous about species, so a query keyed by them can be
+# checked against the reference's organism before anything is predicted. Symbol-keyed data
+# gives no reliable signal (human CD3E vs mouse Cd3e differ only by case, which datasets
+# do not apply consistently), so organism inference returns None there and the existing
+# shared-gene guard handles the mismatch.
+_ENSEMBL_ORGANISM = (("ENSMUSG", "mus_musculus"), ("ENSG", "homo_sapiens"))
+
+
+def infer_organism(var_names, sample=200):
+    """Best-effort organism from Ensembl gene ids; ``None`` when it cannot be told."""
+    head = [str(v).upper() for v in list(var_names)[:sample]]
+    if not head:
+        return None
+    for prefix, organism in _ENSEMBL_ORGANISM:
+        if sum(h.startswith(prefix) for h in head) > len(head) // 2:
+            return organism
+    return None
+
 
 def discover_hierarchy(embeddings, labels, n_groups=8):
     """Cluster cell-type centroids in embedding space into ``n_groups`` coarse groups.
@@ -73,7 +91,7 @@ class HierarchicalReferenceModel:
     """A coarse ReferenceModel + one fine ReferenceModel per coarse group."""
 
     def __init__(self, coarse, fine, type_to_group, classes, class_to_cl=None,
-                 class_to_tissue=None):
+                 class_to_tissue=None, build_info=None):
         self.coarse = coarse                  # ReferenceModel over coarse groups
         self.fine = fine                      # {group: ReferenceModel | single-label str}
         self.type_to_group = dict(type_to_group)
@@ -84,11 +102,39 @@ class HierarchicalReferenceModel:
         # ["*"] means pan-tissue (allowed everywhere); a class absent from the map
         # is likewise treated as always-allowed. See refine_to_tissue().
         self.class_to_tissue = dict(class_to_tissue) if class_to_tissue else {}
+        # Provenance written by the build scripts (organism, corpus, calibration,
+        # attribution). Absent for models built before it existed, hence the plain dict.
+        self.build_info = dict(build_info) if build_info else {}
+
+    @property
+    def organism(self):
+        """Organism the reference was built from, or ``None`` if not recorded."""
+        return self.build_info.get("organism")
+
+    def _check_organism(self, adata):
+        """Fail loudly on a cross-species query rather than annotating noise.
+
+        Mouse and human Ensembl ids share essentially nothing, so the shared-gene guard
+        would eventually catch this — but with a message about gene identifiers, sending
+        the user to fix a var_names problem they do not have. When both organisms are
+        known, say the real thing.
+        """
+        query = infer_organism(adata.var_names)
+        if query is None and getattr(adata, "raw", None) is not None:
+            query = infer_organism(adata.raw.var_names)
+        if query and self.organism and query != self.organism:
+            raise ValueError(
+                f"This reference was built from {self.organism}, but the query's gene "
+                f"ids look like {query}. Annotating across species would produce "
+                "meaningless labels. Use a reference for your organism — "
+                "`actinn_jax.list_references()` shows what is available."
+            )
 
     def _resolve_gene_ids(self, adata, use_raw):
         """Resolve the query's gene identifier against the reference once, warning
         at most once, so the many coarse/fine sub-model calls don't each re-match
         (and re-warn). Returns the ``gene_names`` override (or ``None``)."""
+        self._check_organism(adata)
         col, idx = _select_gene_ids(adata, self.coarse.norm_genes, use_raw)
         if col is not None:
             warnings.warn(
@@ -178,9 +224,15 @@ class HierarchicalReferenceModel:
         for g, info in man["fine"].items():
             fine[g] = (info["single_label"] if info["single_label"] is not None
                        else ReferenceModel.load(os.path.join(path, f"fine_{g}")))
+        build_info = {}
+        bi = os.path.join(path, "build_info.json")
+        if os.path.exists(bi):
+            with open(bi) as fh:
+                build_info = json.load(fh)
         return cls(coarse, fine, man["type_to_group"], man["classes"],
                    class_to_cl=man.get("class_to_cl"),
-                   class_to_tissue=man.get("class_to_tissue"))
+                   class_to_tissue=man.get("class_to_tissue"),
+                   build_info=build_info)
 
 
 def build_hierarchical_reference(ref, label_key, embeddings=None, n_groups=8,
@@ -469,13 +521,76 @@ def annotate(query, model, output_label_name="celltype", **kwargs):
     return model.predict(query, output_label_name=output_label_name, **kwargs)
 
 
+def _references_dir():
+    return os.path.join(os.path.dirname(__file__), "references")
+
+
+def list_references():
+    """Every bundled reference, with what you need to pick one.
+
+    Returns a list of dicts: ``name``, ``organism``, ``n_classes``, ``n_groups``,
+    ``size_mb``, ``built`` and ``source``. Printing it is the intended use::
+
+        for r in actinn_jax.list_references():
+            print(r["name"], r["organism"], r["n_classes"])
+    """
+    root = _references_dir()
+    out = []
+    for name in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+        d = os.path.join(root, name)
+        man_path = os.path.join(d, "manifest.json")
+        if not os.path.isdir(d) or not os.path.exists(man_path):
+            continue
+        with open(man_path) as fh:
+            man = json.load(fh)
+        info = {}
+        bi = os.path.join(d, "build_info.json")
+        if os.path.exists(bi):
+            with open(bi) as fh:
+                info = json.load(fh)
+        teacher = info.get("teacher")
+        source = (teacher.get("model") if isinstance(teacher, dict)
+                  else teacher if teacher else None)
+        if source is None:
+            release = info.get("census_release") or {}
+            build = release.get("release_build")
+            source = f"CELLxGENE census {build}" if build else "unspecified"
+        out.append({
+            "name": name,
+            # References built before organism was recorded are all human.
+            "organism": info.get("organism", "homo_sapiens"),
+            "n_classes": len(man.get("classes", [])),
+            "n_groups": len(set(man.get("type_to_group", {}).values())),
+            "size_mb": round(sum(
+                os.path.getsize(os.path.join(d, f)) for f in os.listdir(d)
+                if os.path.isfile(os.path.join(d, f))) / 1e6, 1),
+            "built": info.get("built_utc"),
+            "source": source,
+        })
+    return out
+
+
+def default_reference_for(organism):
+    """Name of the reference to use for ``organism``, or ``None`` if none is bundled."""
+    matches = [r for r in list_references() if r["organism"] == organism]
+    if not matches:
+        return None
+    # Prefer the most specific typology on offer, breaking ties by recency; for human
+    # that selects the distilled reference over the raw census build.
+    matches.sort(key=lambda r: (r["built"] or "", r["n_classes"]), reverse=True)
+    return matches[0]["name"]
+
+
 def bundled_reference(name="broad_human_v1"):
     """Load a pre-trained HierarchicalReferenceModel shipped with actinn-jax.
 
-    These annotate unknown human single-cell data out of the box on CPU — no scPRINT,
-    no GPU. ``name`` resolves to ``actinn_jax/references/<name>/``.
+    These annotate unknown single-cell data out of the box on CPU — no scPRINT, no GPU.
+    ``name`` resolves to ``actinn_jax/references/<name>/``; see :func:`list_references`.
     """
-    path = os.path.join(os.path.dirname(__file__), "references", name)
+    path = os.path.join(_references_dir(), name)
     if not os.path.isdir(path):
-        raise FileNotFoundError(f"bundled reference '{name}' not found at {path}")
+        available = ", ".join(r["name"] for r in list_references()) or "none installed"
+        raise FileNotFoundError(
+            f"bundled reference '{name}' not found at {path}. Available: {available}"
+        )
     return HierarchicalReferenceModel.load(path)

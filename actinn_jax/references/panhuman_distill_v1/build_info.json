@@ -47,5 +47,6 @@
       "cells_per_s": 12039
     }
   ],
-  "corpus": "34,063 cells from krasnow lung / HLiCA liver / blood+gut plus a CELLxGENE census 2025-11-08 pull (51,346 cells, 867 types, 376 tissues)"
+  "corpus": "34,063 cells from krasnow lung / HLiCA liver / blood+gut plus a CELLxGENE census 2025-11-08 pull (51,346 cells, 867 types, 376 tissues)",
+  "organism": "homo_sapiens"
 }

@@ -1,0 +1,6 @@
+{
+  "name": "broad_human_v1",
+  "organism": "homo_sapiens",
+  "source": "CELLxGENE census 2025-11-08, ~800 types (scPRINT-clustered hierarchy)",
+  "note": "provenance recorded retrospectively; this reference predates build_info.json, so no calibration table or corpus sizes"
+}
