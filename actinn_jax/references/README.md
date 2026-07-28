@@ -26,9 +26,24 @@ Census-wide human reference — the breadth scPRINT itself was trained on.
   Use `annotate(adata, model, min_prob=0.5)` to abstain (`"unknown"`) on low-confidence
   / out-of-distribution cells rather than force-labeling them.
 
-Build scripts (companion repo
-[actinn-jax-benchmark](https://github.com/iandriver/actinn-jax-benchmark)):
-`benchmark/explore/fetch_census_wide.py` → `embed_broad.py` → `build_census_model.py`.
+## Rebuilding
+
+One command in the companion repo
+[actinn-jax-benchmark](https://github.com/iandriver/actinn-jax-benchmark):
+
+```bash
+benchmark/explore/update_broad_reference.sh
+```
+
+It chains the three build stages (`fetch_census_wide.py` → `embed_broad.py` →
+`build_census_model.py`) through one work directory, backs up the reference it is about to
+replace, and then **scores the rebuilt model on a held-out atlas** — a rebuild can train
+cleanly and still annotate worse. Full write-up, knobs, and the numbers a healthy rebuild
+should land near: `docs/UPDATE_BROAD_REFERENCE.md`.
+
+A rebuilt reference carries a `build_info.json` recording the census release it came from,
+its sizes, and its calibration table. `stable` is a moving pointer, so pin
+`CENSUS_VERSION=2025-11-08` to reproduce *this* reference.
 
 For a narrower, higher-accuracy reference on your own cell types, see
 `examples/build_reference.py`.
