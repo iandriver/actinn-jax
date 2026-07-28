@@ -3,22 +3,35 @@
 Fast, dependency-light cell-type **reference mapping** for single-cell data: train
 on a labeled reference dataset, then annotate any query dataset.
 
-## ⭐ Annotate any human single-cell data — fast, on CPU
+## ⭐ Annotate single-cell data — fast, on CPU
 
-A **two-stage workflow**: a foundation model (scPRINT) is used *once, offline* to
-discover a coarse→fine cell-type hierarchy in a reference; a small actinn-jax model
-trained on it then annotates new data in **milliseconds on a CPU — no GPU, no scPRINT
-at inference**. A pre-trained broad-human reference sampled across the **whole CELLxGENE
-census** (**~800 cell types, 314 tissues, 440 datasets** — the breadth scPRINT itself was
-trained on) ships with the package, so unknown data works out of the box:
+Pre-trained organism-wide references ship with the package, so unknown data works out of
+the box. From the command line, with no arguments to choose:
+
+```bash
+actinn-jax annotate my_data.h5ad --min-prob 0.5 -o annotations.csv
+```
+
+That infers the organism from the query's gene ids and loads the matching reference.
+`actinn-jax references` lists what is installed. From Python:
 
 ```python
 import scanpy as sc, actinn_jax as aj
 
-adata = sc.read_h5ad("my_human_data.h5ad")           # raw counts
-model = aj.bundled_reference("broad_human_v1")        # pre-trained, CPU-only, ~800 types
+for r in aj.list_references():                        # what's available, and for what
+    print(r["name"], r["organism"], r["n_classes"])
+
+adata = sc.read_h5ad("my_data.h5ad")                  # raw counts
+model = aj.bundled_reference("panhuman_distill_v1")   # pre-trained, CPU-only
 adata = aj.annotate(adata, model, min_prob=0.5)       # -> obs['celltype', _coarse, _probability]
 ```
+
+Annotating with a reference for the wrong organism raises rather than returning
+meaningless labels.
+
+Under the hood this is a **two-stage workflow**: a coarse→fine cell-type hierarchy is
+discovered *once, offline*, and a small actinn-jax model trained on it annotates new data
+in **milliseconds on a CPU — no GPU at inference**.
 
 `min_prob` is an **abstain threshold**: cells whose confidence is below it are labeled
 `"unknown"` instead of being force-mapped to the nearest reference type — so genuinely
