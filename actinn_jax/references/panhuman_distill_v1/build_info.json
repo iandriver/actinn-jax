@@ -1,0 +1,51 @@
+{
+  "name": "panhuman_distill_v1",
+  "built_utc": "2026-07-28T06:39:58Z",
+  "teacher": {
+    "model": "Pan-human Azimuth",
+    "citation": "Sarkar, Li, Molla, ... Satija. Organism-scale annotation with Pan-human Azimuth. bioRxiv 2026.",
+    "doi": "10.64898/2026.07.16.738997",
+    "package": "panhumanpy 1.0.0 (MIT)",
+    "weights": "https://doi.org/10.5281/zenodo.20401417",
+    "weights_license": "CC BY 4.0",
+    "attribution_required": true
+  },
+  "teacher_label": "azimuth_fine",
+  "teacher_hierarchy": "azimuth_broad",
+  "n_cells": 85256,
+  "n_classes": 324,
+  "n_hvg": 4000,
+  "arms": [
+    {
+      "arm": "in_corpus",
+      "n_train": 63947,
+      "n_test": 21309,
+      "n_classes": 324,
+      "n_groups": 142,
+      "fidelity_exact": 0.7569,
+      "fidelity_ontology": 0.822,
+      "student_vs_truth": 0.5131,
+      "teacher_vs_truth": 0.5209,
+      "n_scored": 18707,
+      "fit_s": 44.5,
+      "predict_s": 0.95,
+      "cells_per_s": 22393
+    },
+    {
+      "arm": "heldout_liver",
+      "n_train": 79865,
+      "n_test": 5391,
+      "n_classes": 324,
+      "n_groups": 138,
+      "fidelity_exact": 0.7229,
+      "fidelity_ontology": 0.785,
+      "student_vs_truth": 0.4812,
+      "teacher_vs_truth": 0.5107,
+      "n_scored": 5391,
+      "fit_s": 104.4,
+      "predict_s": 0.45,
+      "cells_per_s": 12039
+    }
+  ],
+  "corpus": "34,063 cells from krasnow lung / HLiCA liver / blood+gut plus a CELLxGENE census 2025-11-08 pull (51,346 cells, 867 types, 376 tissues)"
+}
