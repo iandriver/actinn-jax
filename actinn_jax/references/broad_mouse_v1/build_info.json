@@ -1,0 +1,74 @@
+{
+  "name": "broad_mouse_v1",
+  "built_utc": "2026-07-29T00:02:03Z",
+  "census_release": {
+    "release_date": null,
+    "release_build": "2025-11-08",
+    "soma": {
+      "uri": "s3://cellxgene-census-public-us-west-2/cell-census/2025-11-08/soma/",
+      "relative_uri": "/cell-census/2025-11-08/soma/",
+      "s3_region": "us-west-2"
+    },
+    "h5ads": {
+      "uri": "s3://cellxgene-census-public-us-west-2/cell-census/2025-11-08/h5ads/",
+      "relative_uri": "/cell-census/2025-11-08/h5ads/",
+      "s3_region": "us-west-2"
+    },
+    "flags": {
+      "lts": true
+    },
+    "requested_version": "2025-11-08",
+    "per_type_cap": 60,
+    "min_cells": 12,
+    "organism": "mus_musculus",
+    "exclude_datasets": [
+      "812fa7bd-db15-4357-b2c9-efc8e1eb0450",
+      "98e5ea9f-16d6-47ec-a529-686e76515e39"
+    ],
+    "only_datasets": []
+  },
+  "reference_h5ad": "/tmp/actinn_mouse_build/census_wide_ref.h5ad",
+  "n_cells": 27026,
+  "n_types": 453,
+  "n_coarse_groups": 21,
+  "n_tissues": 85,
+  "n_hvg": 4000,
+  "size_mb": 38.1,
+  "hierarchy_source": "ontology",
+  "organism": "mus_musculus",
+  "calibration": [
+    {
+      "min_prob": 0.0,
+      "accuracy_kept": 0.7907,
+      "coverage": 1.0,
+      "ood_flagged": 0.0
+    },
+    {
+      "min_prob": 0.3,
+      "accuracy_kept": 0.8248,
+      "coverage": 0.9426,
+      "ood_flagged": 0.1985
+    },
+    {
+      "min_prob": 0.5,
+      "accuracy_kept": 0.8757,
+      "coverage": 0.8238,
+      "ood_flagged": 0.4848
+    },
+    {
+      "min_prob": 0.7,
+      "accuracy_kept": 0.9137,
+      "coverage": 0.6763,
+      "ood_flagged": 0.69
+    },
+    {
+      "min_prob": 0.9,
+      "accuracy_kept": 0.948,
+      "coverage": 0.4588,
+      "ood_flagged": 0.8807
+    }
+  ],
+  "benchmark_sha": "6dfbc82",
+  "actinn_jax_sha": "e9abd46",
+  "actinn_jax_version": "0.3.0"
+}

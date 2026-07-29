@@ -41,6 +41,31 @@ reference must cite:
 
 The same notice travels inside the model at `panhuman_distill_v1/build_info.json`.
 
+## `broad_mouse_v1`
+
+Census-wide **mouse** reference. Pan-human Azimuth is human-only and scPRINT's mouse support
+is untested here, so this one takes its coarse→fine hierarchy from **Cell Ontology lineage**
+instead of a foundation-model embedding — free, deterministic, and species-independent.
+
+- **Source:** CELLxGENE census (2025-11-08), primary mouse cells, ≤60 per type →
+  **27,026 cells, 453 cell types, 85 tissues** across 47 datasets. Two datasets were
+  excluded from the reference entirely and used as the test set.
+- **Build:** 17 s on CPU. No GPU, no foundation model.
+- **Size:** ~38 MB.
+- **Held out** (12,646 cells from the two withheld datasets, 137 truth types, 41 tissues):
+  ontology concordance **0.638**, rising to **0.718** on the 71% of cells kept at
+  `min_prob=0.5`; 9,712 cells/s.
+- **Abstain calibration** (45 types withheld as out-of-distribution):
+
+  | `min_prob` | accuracy (kept) | coverage | OOD flagged |
+  |-----------:|----------------:|---------:|------------:|
+  | 0.0 | 0.79 | 100% | 0% |
+  | 0.5 | 0.88 | 82% | 49% |
+  | 0.7 | 0.91 | 68% | 69% |
+
+Details and the hierarchy ablation that justifies the CL route: `docs/PAN_MOUSE.md` in the
+companion repo.
+
 ## `broad_human_v1`
 
 Census-wide human reference — the breadth scPRINT itself was trained on.
