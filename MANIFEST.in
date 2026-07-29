@@ -1,0 +1,23 @@
+# Controls the SOURCE distribution. `include-package-data = false` in pyproject.toml only
+# governs the wheel -- sdists are assembled by different rules, and without this file the
+# sdist was 110 MB (all bundled references), over PyPI's 100 MB per-file limit even though
+# the wheel was fine at 15 MB.
+#
+# The large references are downloaded from Zenodo at runtime (actinn_jax/registry.py); only
+# the small default one is distributed.
+
+prune actinn_jax/references
+recursive-include actinn_jax/references/panhuman_distill_v1 *.npz *.json
+include actinn_jax/references/README.md
+
+include LICENSE
+include README.md
+recursive-include tests *.py
+recursive-include examples *.py
+
+# Never ship a local dev environment, build leftovers, or caches.
+prune .venv
+prune build
+prune dist
+prune .github
+global-exclude *.py[cod] __pycache__/* .DS_Store

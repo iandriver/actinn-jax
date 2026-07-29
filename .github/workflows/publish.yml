@@ -1,0 +1,127 @@
+name: publish
+
+# Publishes actinn-jax via PyPI Trusted Publishing (OIDC) -- no API token is stored in
+# GitHub secrets or anywhere else. See RELEASING.md for the one-time publisher setup.
+#
+#   push a v* tag    -> test, build, publish to PyPI
+#   manual dispatch  -> test, build, optionally publish to TestPyPI (rehearsal)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Where to publish"
+        required: true
+        default: testpypi
+        type: choice
+        options: [testpypi, none]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e ".[test]"
+      - run: pytest tests/ -q
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip build twine
+      - run: python -m build
+      - run: twine check dist/*
+
+      # A wheel carrying every bundled reference was 110 MB -- over PyPI's 100 MB per-file
+      # limit -- and so was the sdist, for a *different* reason (wheels obey
+      # include-package-data, sdists obey MANIFEST.in). Both fixes are one line each and a
+      # future change could quietly undo either. Fail here, not at the upload.
+      - name: enforce artifact size limits
+        run: |
+          python - <<'PY'
+          import glob, os, sys
+          LIMIT_MB = 90            # PyPI's hard limit is 100; leave headroom
+          bad = []
+          for f in sorted(glob.glob("dist/*")):
+              mb = os.path.getsize(f) / 1e6
+              print(f"{os.path.basename(f):<48} {mb:>7.1f} MB")
+              if mb > LIMIT_MB:
+                  bad.append(f)
+          if bad:
+              print(f"\nFAIL: artifact over {LIMIT_MB} MB; PyPI rejects files above 100 MB.")
+              print("Large references are fetched from Zenodo at runtime "
+                    "(actinn_jax/registry.py), not bundled. Check that "
+                    "include-package-data is still false (wheel) and that MANIFEST.in still "
+                    "prunes actinn_jax/references (sdist).")
+              sys.exit(1)
+          PY
+
+      # The wheel must be self-sufficient: its shipped reference has to load with no
+      # network, or `pip install` gives a package that cannot annotate anything offline.
+      - name: smoke-test the built wheel
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install --quiet dist/*.whl
+          /tmp/smoke/bin/python - <<'PY'
+          import actinn_jax as aj
+          shipped = [r["name"] for r in aj.list_references() if r["status"] == "installed"]
+          print("shipped in wheel:", shipped)
+          assert shipped, "no reference ships in the wheel; offline use would be broken"
+          m = aj.bundled_reference(shipped[0])
+          print(f"{shipped[0]}: {len(m.classes)} classes, organism {m.organism}")
+          assert m.organism, "a shipped reference must declare its organism"
+          assert aj.__version__, "version must be importable"
+          PY
+          /tmp/smoke/bin/actinn-jax references
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-testpypi:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write          # required for trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

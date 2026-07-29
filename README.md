@@ -79,11 +79,9 @@ neuron layers), so raw accuracy is lower than a focused reference — the abstai
 recovers precision on the cells it keeps. For a narrower, higher-accuracy reference on
 your own cell types, build one (below).
 
-Or from the command line:
-
-```bash
-python examples/quickstart_annotate.py my_human_data.h5ad   # writes *_annotations.csv
-```
+The abstain threshold above is for the ~800-type census reference; each bundled reference
+reports its own calibration in `build_info.json`, and `broad_mouse_v1`'s is notably better
+(0.88 accuracy at 82% coverage).
 
 **Build your own reference** (the only step that may use a GPU; install `scprint`):
 
@@ -174,8 +172,8 @@ recovered markers were led by **ASCL3** (the ionocyte master transcription facto
 **ATP6V0B** (the V-ATPase subunit ionocytes are named for). Raising `min_cells` above 22
 correctly drops the flag — the knob does what it says. The full walkthrough (with the
 t-SNE highlight of the flagged population) is in
-[`examples/novel_celltypes.ipynb`](examples/novel_celltypes.ipynb); a script version is
-[`examples/detect_novel_celltypes.py`](examples/detect_novel_celltypes.py).
+[`examples/novel_celltypes.ipynb`](https://github.com/iandriver/actinn-jax/blob/main/examples/novel_celltypes.ipynb); a script version is
+[`examples/detect_novel_celltypes.py`](https://github.com/iandriver/actinn-jax/blob/main/examples/detect_novel_celltypes.py).
 
 ## Focused reference: liver (HLiCA)
 
@@ -204,14 +202,14 @@ adata = aj.annotate(adata, model)
 Data used under CC-BY 4.0; please cite the original paper if you use this reference.
 
 **Runnable notebooks:**
-[`examples/annotate_with_timing.ipynb`](examples/annotate_with_timing.ipynb) annotates a
+[`examples/annotate_with_timing.ipynb`](https://github.com/iandriver/actinn-jax/blob/main/examples/annotate_with_timing.ipynb) annotates a
 65k-cell human lung atlas end-to-end — load, throughput (cells/s), exact vs
 **ontology-aware** concordance, and the abstain sweep.
-[`examples/liver_zonation.ipynb`](examples/liver_zonation.ipynb) shows **fine-label
+[`examples/liver_zonation.ipynb`](https://github.com/iandriver/actinn-jax/blob/main/examples/liver_zonation.ipynb) shows **fine-label
 mapping around hepatocyte zonation** — mapping a liver dataset onto the portal→mid→central
 axis, with a confusion heatmap and ordinal (within-1-zone) scoring. See also
-[`examples/quickstart_annotate.py`](examples/quickstart_annotate.py) and
-[`examples/build_reference.py`](examples/build_reference.py). The *why* —
+[`examples/quickstart_annotate.py`](https://github.com/iandriver/actinn-jax/blob/main/examples/quickstart_annotate.py) and
+[`examples/build_reference.py`](https://github.com/iandriver/actinn-jax/blob/main/examples/build_reference.py). The *why* —
 accuracy/speed/memory benchmarks and the design rationale — lives in the companion
 [actinn-jax-benchmark](https://github.com/iandriver/actinn-jax-benchmark) repo
 ([model-flow mini-paper](https://github.com/iandriver/actinn-jax-benchmark/blob/main/docs/MODEL_FLOW.md)).
@@ -267,7 +265,7 @@ Published builds also install straight from PyPI once released: `pip install act
 
 ### Running the example notebooks
 
-The [`examples/`](examples/) notebooks need a few extra packages (Jupyter,
+The [`examples/`](https://github.com/iandriver/actinn-jax/blob/main/examples/) notebooks need a few extra packages (Jupyter,
 matplotlib, the `pronto` ontology reader). Install the `notebooks` extra and
 launch JupyterLab:
 
@@ -409,4 +407,4 @@ python benchmark/benchmark.py       # timing on synthetic data
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/iandriver/actinn-jax/blob/main/LICENSE).

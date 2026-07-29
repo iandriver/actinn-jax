@@ -28,3 +28,6 @@ predicted_*.txt
 
 # never commit a Zenodo API token
 .zenodo_token
+
+# uv writes this during builds; a library should not pin its consumers
+uv.lock

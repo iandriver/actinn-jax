@@ -4,7 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "actinn-jax"
-version = "0.1.0"
+# Single source of truth: actinn_jax.__version__ (see [tool.setuptools.dynamic] below). A
+# literal here silently won the build while __init__.py said 0.3.0, so an installed package
+# would have reported a version the index had never seen.
+dynamic = ["version"]
 description = "Fast JAX reimplementation of ACTINN for single-cell cell-type reference mapping"
 readme = "README.md"
 authors = [
@@ -47,6 +50,9 @@ test = ["pytest"]
 # Everything needed to run the example notebooks in examples/ (leidenalg/igraph
 # also enable the auto-clustering path of detect_novel_celltypes).
 notebooks = ["jupyterlab", "ipykernel", "matplotlib", "pronto", "leidenalg", "igraph"]
+
+[tool.setuptools.dynamic]
+version = {attr = "actinn_jax.__version__"}
 
 [tool.setuptools]
 packages = ["actinn_jax"]
