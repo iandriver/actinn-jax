@@ -73,6 +73,17 @@ jobs:
               sys.exit(1)
           PY
 
+      # 0.3.0 shipped installable by pip and BROKEN under uv: loose dependency floors let
+      # uv take the newest numpy and degrade scanpy to a release whose numba cannot build.
+      # The two resolvers backtrack differently, so testing one proves nothing about the
+      # other -- check both.
+      - name: resolve the wheel with uv as well as pip
+        run: |
+          pipx install uv || pip install uv
+          uv venv /tmp/uvsmoke
+          uv pip install --python /tmp/uvsmoke/bin/python dist/*.whl
+          /tmp/uvsmoke/bin/python -c "import actinn_jax; print('uv resolve ok', actinn_jax.__version__)"
+
       # The wheel must be self-sufficient: its shipped reference has to load with no
       # network, or `pip install` gives a package that cannot annotate anything offline.
       - name: smoke-test the built wheel
