@@ -44,29 +44,39 @@ REGISTRY = {
         "organism": "homo_sapiens",
         "n_classes": 798,
         "size_mb": 45,
-        "sha256": "fbc99213a66586c64bc181b3cfe7d909940c6835001891b47c9382943b05c93a",
+        "sha256": "541bbbcdc36826b10ee2f141511e4e9fd5cb0a5529f21e799fad06a9d7e465a4",
         "description": "Census-wide human reference, ~800 types, scPRINT-derived hierarchy",
     },
     "broad_mouse_v1": {
         "organism": "mus_musculus",
         "n_classes": 453,
         "size_mb": 34,
-        "sha256": "e0997605b96d4445c92d03d2fbc53c58c9e114d10c3110bed3bbb11fa3a7b6df",
+        "sha256": "b013364b214185597c6b20449de93ea9e5af4b27e0ea1718cd70a4ea42abfdf0",
         "description": "Census-wide mouse reference, 453 types, Cell-Ontology hierarchy",
     },
     "liver_hlica_v1": {
         "organism": "homo_sapiens",
         "n_classes": 38,
         "size_mb": 11,
-        "sha256": "9312fb428ad8a47c8a30914c4cab9387e8861a8f908a6740187d342a945bd5d3",
+        "sha256": "46a9c93286bc6c4e8538aa50cc48a53b74236479d7d8859c57a695cc705c97d2",
         "description": "HLiCA liver reference (38 types)",
     },
     "liver_hlica_v2": {
         "organism": "homo_sapiens",
         "n_classes": 48,
         "size_mb": 11,
-        "sha256": "009241532e75cefbd3c66fd90a2d0510154e220a708656515a5fd0a013eb7053",
+        "sha256": "a94ba60c6402bb1d489bc98bf418f5e1bb0ccbaf5e20273a71c8792ef6ad8fa5",
         "description": "HLiCA liver reference (48 types)",
+    },
+    # Also ships inside the wheel, so this entry is normally unused -- it exists so the
+    # archive record is complete and so a user who installs from a trimmed build (or
+    # deletes the bundled copy) can still fetch it.
+    "panhuman_distill_v1": {
+        "organism": "homo_sapiens",
+        "n_classes": 324,
+        "size_mb": 15,
+        "sha256": "0967833760761d9362c6a5cf9ffbcf97132ddd05f6780d73917dbebc3adec608",
+        "description": "Human reference distilled from Pan-human Azimuth, 324 types",
     },
 }
 

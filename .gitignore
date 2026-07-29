@@ -25,3 +25,6 @@ predicted_*.txt
 
 # ...except the bundled reference weights shipped with the package
 !actinn_jax/references/**/*.npz
+
+# never commit a Zenodo API token
+.zenodo_token
