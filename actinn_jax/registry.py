@@ -33,8 +33,12 @@ import urllib.request
 # location can be used without touching the code.
 DEFAULT_BASE_URL = os.environ.get(
     "ACTINN_JAX_REFERENCE_URL",
-    "https://zenodo.org/records/PENDING/files",
+    "https://zenodo.org/records/21688151/files",
 )
+
+# Cite the concept DOI (10.5281/zenodo.21688150) to always resolve to the latest version;
+# 10.5281/zenodo.21688151 pins this exact set of references.
+REFERENCE_DOI = "10.5281/zenodo.21688151"
 
 # name -> metadata. `sha256` is filled in by tools/package_references.py when the archives
 # are built; an entry whose checksum is None cannot be fetched (we refuse to install an

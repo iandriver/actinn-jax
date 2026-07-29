@@ -33,9 +33,11 @@ meaningless labels.
 
 `panhuman_distill_v1` (16 MB, human) ships inside the wheel, so `pip install actinn-jax`
 annotates human data offline with nothing to download. The census-scale references are
-tens of MB each and are **fetched once on first use**, then cached in
+tens of MB each and are **fetched once on first use** from Zenodo
+([10.5281/zenodo.21688151](https://doi.org/10.5281/zenodo.21688151)), then cached in
 `~/.cache/actinn-jax/` — `bundled_reference("broad_mouse_v1")` works whether or not it has
-been downloaded before. Each archive is checksum-verified before it is unpacked.
+been downloaded before (~40 s on a cold cache, instant after). Each archive is
+checksum-verified before it is unpacked.
 
 For a tutorial or a workshop on a slow connection, pull them ahead of time:
 

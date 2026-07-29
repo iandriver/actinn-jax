@@ -1,8 +1,20 @@
 # Bundled references
 
 Pre-trained `HierarchicalReferenceModel`s loadable with
-`actinn_jax.bundled_reference(name)`. They annotate unknown human single-cell data on
-CPU with no scPRINT/GPU at inference.
+`actinn_jax.bundled_reference(name)`. They annotate unknown single-cell data on CPU with
+no scPRINT/GPU at inference.
+
+Only `panhuman_distill_v1` ships inside the wheel — all of them together exceed PyPI's
+per-file limit. The rest are archived on Zenodo and downloaded on first use, then cached
+under `~/.cache/actinn-jax/` (~40 s for a 34 MB reference on a cold cache, instant after):
+
+> Driver I. *actinn-jax pre-trained cell-type annotation references (human and mouse).*
+> Zenodo, [10.5281/zenodo.21688151](https://doi.org/10.5281/zenodo.21688151) (CC BY 4.0).
+> Cite [10.5281/zenodo.21688150](https://doi.org/10.5281/zenodo.21688150) — the concept
+> DOI — to always resolve to the latest version.
+
+`actinn-jax fetch` pre-downloads them (useful before a tutorial or an offline session);
+`actinn-jax references` shows what is installed, cached or available.
 
 ## `panhuman_distill_v1`
 
