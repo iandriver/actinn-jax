@@ -29,6 +29,33 @@ adata = aj.annotate(adata, model, min_prob=0.5)       # -> obs['celltype', _coar
 Annotating with a reference for the wrong organism raises rather than returning
 meaningless labels.
 
+### Where the references live
+
+`panhuman_distill_v1` (16 MB, human) ships inside the wheel, so `pip install actinn-jax`
+annotates human data offline with nothing to download. The census-scale references are
+tens of MB each and are **fetched once on first use**, then cached in
+`~/.cache/actinn-jax/` — `bundled_reference("broad_mouse_v1")` works whether or not it has
+been downloaded before. Each archive is checksum-verified before it is unpacked.
+
+For a tutorial or a workshop on a slow connection, pull them ahead of time:
+
+```bash
+actinn-jax fetch                      # everything
+actinn-jax fetch broad_mouse_v1       # or just one
+actinn-jax references                 # installed / cached / available
+actinn-jax cache --clear              # free the space again
+```
+
+In a notebook the same thing is one call, and it is safe to re-run:
+
+```python
+from actinn_jax import registry
+registry.fetch_reference("broad_mouse_v1")     # no-op once cached
+```
+
+Point `ACTINN_JAX_REFERENCE_URL` at a mirror to serve them from somewhere else, and
+`ACTINN_JAX_CACHE` to relocate the cache (useful on a shared cluster filesystem).
+
 Under the hood this is a **two-stage workflow**: a coarse→fine cell-type hierarchy is
 discovered *once, offline*, and a small actinn-jax model trained on it annotates new data
 in **milliseconds on a CPU — no GPU at inference**.

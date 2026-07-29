@@ -51,6 +51,17 @@ notebooks = ["jupyterlab", "ipykernel", "matplotlib", "pronto", "leidenalg", "ig
 [tool.setuptools]
 packages = ["actinn_jax"]
 zip-safe = false
+# Defaults to true under pyproject.toml, which sweeps every file in the package directory
+# into the wheel and silently re-adds the large references. package-data below is the
+# whole point, so it has to be the only source.
+include-package-data = false
 
 [tool.setuptools.package-data]
-actinn_jax = ["*", "references/*/*.npz", "references/*/*.json"]
+# Only the smallest reference ships in the wheel. All of them together build a 110 MB
+# wheel, over PyPI's 100 MB per-file limit, and every new reference makes it worse -- the
+# rest download on first use and are cached (actinn_jax/registry.py). panhuman_distill_v1
+# is the choice because it is 16 MB and the most accurate general-purpose human reference,
+# so `pip install actinn-jax` annotates human data offline with nothing to fetch.
+actinn_jax = ["*", "references/README.md",
+              "references/panhuman_distill_v1/*.npz",
+              "references/panhuman_distill_v1/*.json"]

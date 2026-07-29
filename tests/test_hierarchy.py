@@ -1,5 +1,7 @@
 """Tests for the two-stage hierarchical workflow."""
 
+import os
+
 import numpy as np
 import pytest
 
@@ -220,3 +222,78 @@ def test_list_references_reports_organism_and_size():
         assert r["n_classes"] > 0 and r["size_mb"] > 0
     # every shipped reference must declare its organism, or the guard above cannot fire
     assert all(r["organism"] for r in refs)
+
+
+# ---- reference retrieval ----------------------------------------------------------
+
+def _make_archive(tmp_path, name="toy_ref"):
+    """Build a real reference, tar it, and return (archive_dir, sha256)."""
+    import hashlib
+    import tarfile
+
+    train = make_adata(n_types=4, seed=3)
+    model = aj.build_hierarchical_reference(train, "celltype",
+                                            _embeddings_from_labels(train), n_groups=2,
+                                            print_cost=False)
+    src = tmp_path / name
+    model.save(str(src))
+    release = tmp_path / "release"
+    release.mkdir()
+    archive = release / f"{name}.tar.gz"
+    with tarfile.open(archive, "w:gz") as tf:
+        tf.add(str(src), arcname=name)
+    return release, hashlib.sha256(archive.read_bytes()).hexdigest()
+
+
+def test_fetch_downloads_verifies_and_caches(tmp_path, monkeypatch):
+    """The whole point of not shipping the large references: first use downloads, later
+    uses are local."""
+    from actinn_jax import registry
+
+    release, digest = _make_archive(tmp_path)
+    monkeypatch.setenv("ACTINN_JAX_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setitem(registry.REGISTRY, "toy_ref",
+                        {"organism": "homo_sapiens", "n_classes": 4, "size_mb": 1,
+                         "sha256": digest, "description": "toy"})
+
+    assert registry.cached_references() == []
+    path = registry.fetch_reference("toy_ref", base_url=release.as_uri(), quiet=True)
+    assert os.path.exists(os.path.join(path, "manifest.json"))
+    assert registry.cached_references() == ["toy_ref"]
+    assert aj.HierarchicalReferenceModel.load(path).classes
+
+
+def test_fetch_refuses_a_corrupt_archive(tmp_path, monkeypatch):
+    """A truncated or tampered download must fail loudly. A half-unpacked model that
+    later looks cached would be far worse than a failed fetch."""
+    from actinn_jax import registry
+
+    release, _ = _make_archive(tmp_path)
+    monkeypatch.setenv("ACTINN_JAX_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setitem(registry.REGISTRY, "toy_ref",
+                        {"organism": "homo_sapiens", "n_classes": 4, "size_mb": 1,
+                         "sha256": "0" * 64, "description": "toy"})
+
+    with pytest.raises(RuntimeError, match="Checksum mismatch"):
+        registry.fetch_reference("toy_ref", base_url=release.as_uri(), quiet=True)
+    assert registry.cached_references() == [], "nothing may be left behind"
+
+
+def test_fetch_refuses_when_no_checksum_is_recorded(tmp_path, monkeypatch):
+    from actinn_jax import registry
+
+    monkeypatch.setenv("ACTINN_JAX_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setitem(registry.REGISTRY, "toy_ref",
+                        {"organism": "homo_sapiens", "n_classes": 4, "size_mb": 1,
+                         "sha256": None, "description": "toy"})
+    with pytest.raises(RuntimeError, match="No checksum"):
+        registry.fetch_reference("toy_ref", quiet=True)
+
+
+def test_every_registry_entry_has_a_checksum():
+    """Guards the release process: an entry published without a checksum cannot be
+    installed by anyone."""
+    from actinn_jax import registry
+
+    missing = [n for n, m in registry.REGISTRY.items() if not m.get("sha256")]
+    assert not missing, f"registry entries without checksums: {missing}"

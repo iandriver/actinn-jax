@@ -19,14 +19,40 @@ def _cmd_references(args):
 
     refs = list_references()
     if not refs:
-        print("No bundled references found.")
+        print("No references found.")
         return 1
     w = max(len(r["name"]) for r in refs)
-    print(f"{'name':<{w}}  {'organism':<14} {'types':>6} {'groups':>7} {'MB':>6}  source")
-    print("-" * (w + 60))
+    print(f"{'name':<{w}}  {'organism':<14} {'types':>6} {'MB':>6}  {'status':<10} source")
+    print("-" * (w + 62))
     for r in refs:
         print(f"{r['name']:<{w}}  {r['organism']:<14} {r['n_classes']:>6} "
-              f"{r['n_groups']:>7} {r['size_mb']:>6}  {r['source']}")
+              f"{r['size_mb']:>6}  {r['status']:<10} {r['source']}")
+    print("\n'available' downloads on first use; 'cached' is already downloaded.")
+    return 0
+
+
+def _cmd_fetch(args):
+    """Pre-download references, so a tutorial or an offline session does not stall on a
+    download partway through."""
+    from . import registry
+
+    names = args.names or sorted(registry.REGISTRY)
+    for name in names:
+        path = registry.fetch_reference(name, force=args.force)
+        print(f"{name}: {path}")
+    return 0
+
+
+def _cmd_cache(args):
+    from . import registry
+
+    if args.clear:
+        removed = registry.clear_cache(args.name)
+        print(f"removed: {', '.join(removed) if removed else 'nothing'}")
+        return 0
+    print(f"cache: {registry.cache_dir()}")
+    cached = registry.cached_references()
+    print(f"cached references: {', '.join(cached) if cached else 'none'}")
     return 0
 
 
@@ -81,8 +107,18 @@ def main(argv=None):
     p = argparse.ArgumentParser(prog="actinn-jax", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("references", help="list bundled references").set_defaults(
+    sub.add_parser("references", help="list references and their status").set_defaults(
         func=_cmd_references)
+
+    f = sub.add_parser("fetch", help="pre-download references into the cache")
+    f.add_argument("names", nargs="*", help="reference names (default: all downloadable)")
+    f.add_argument("--force", action="store_true", help="re-download even if cached")
+    f.set_defaults(func=_cmd_fetch)
+
+    c = sub.add_parser("cache", help="show or clear the download cache")
+    c.add_argument("--clear", action="store_true")
+    c.add_argument("--name", default=None, help="clear just this one")
+    c.set_defaults(func=_cmd_cache)
 
     a = sub.add_parser("annotate", help="annotate an h5ad against a bundled reference")
     a.add_argument("query", help="path to an .h5ad of raw counts")

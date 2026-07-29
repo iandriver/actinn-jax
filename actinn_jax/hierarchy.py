@@ -525,22 +525,40 @@ def _references_dir():
     return os.path.join(os.path.dirname(__file__), "references")
 
 
-def list_references():
-    """Every bundled reference, with what you need to pick one.
+def _reference_dirs():
+    """Every place a reference can live, in resolution order: shipped inside the wheel
+    first, then the download cache."""
+    from . import registry
+
+    roots = [_references_dir(), registry.cache_dir()]
+    seen = {}
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for name in sorted(os.listdir(root)):
+            d = os.path.join(root, name)
+            if name not in seen and os.path.exists(os.path.join(d, "manifest.json")):
+                seen[name] = d
+    return seen
+
+
+def list_references(include_available=True):
+    """Every reference you can load, with what you need to pick one.
 
     Returns a list of dicts: ``name``, ``organism``, ``n_classes``, ``n_groups``,
-    ``size_mb``, ``built`` and ``source``. Printing it is the intended use::
+    ``size_mb``, ``built``, ``source`` and ``status`` (``"installed"``, ``"cached"`` or
+    ``"available"`` — the last meaning it downloads on first use). Printing it is the
+    intended use::
 
         for r in actinn_jax.list_references():
-            print(r["name"], r["organism"], r["n_classes"])
+            print(r["name"], r["organism"], r["n_classes"], r["status"])
     """
-    root = _references_dir()
+    from . import registry
+
     out = []
-    for name in sorted(os.listdir(root)) if os.path.isdir(root) else []:
-        d = os.path.join(root, name)
+    shipped = _references_dir()
+    for name, d in _reference_dirs().items():
         man_path = os.path.join(d, "manifest.json")
-        if not os.path.isdir(d) or not os.path.exists(man_path):
-            continue
         with open(man_path) as fh:
             man = json.load(fh)
         info = {}
@@ -566,8 +584,23 @@ def list_references():
                 if os.path.isfile(os.path.join(d, f))) / 1e6, 1),
             "built": info.get("built_utc"),
             "source": source,
+            "status": "installed" if d.startswith(shipped) else "cached",
         })
-    return out
+
+    if include_available:
+        # Not downloaded yet: describe them from the registry so a user can see what
+        # exists before paying for a download.
+        have = {r["name"] for r in out}
+        for name, meta in sorted(registry.REGISTRY.items()):
+            if name in have:
+                continue
+            out.append({
+                "name": name, "organism": meta["organism"],
+                "n_classes": meta["n_classes"], "n_groups": None,
+                "size_mb": meta["size_mb"], "built": None,
+                "source": meta["description"], "status": "available",
+            })
+    return sorted(out, key=lambda r: r["name"])
 
 
 def default_reference_for(organism):
@@ -581,16 +614,25 @@ def default_reference_for(organism):
     return matches[0]["name"]
 
 
-def bundled_reference(name="broad_human_v1"):
-    """Load a pre-trained HierarchicalReferenceModel shipped with actinn-jax.
+def bundled_reference(name="panhuman_distill_v1", download=True, quiet=False):
+    """Load a pre-trained HierarchicalReferenceModel by name.
 
-    These annotate unknown single-cell data out of the box on CPU — no scPRINT, no GPU.
-    ``name`` resolves to ``actinn_jax/references/<name>/``; see :func:`list_references`.
+    Resolves in order: shipped inside the package, then the download cache, then — unless
+    ``download=False`` — fetched from the reference archive and cached. Only the smallest
+    reference ships in the wheel (all of them together exceed PyPI's file-size limit), so
+    the first use of a census-scale reference downloads it once and every later use is
+    local. See :func:`list_references` and ``actinn_jax.registry``.
     """
-    path = os.path.join(_references_dir(), name)
-    if not os.path.isdir(path):
-        available = ", ".join(r["name"] for r in list_references()) or "none installed"
-        raise FileNotFoundError(
-            f"bundled reference '{name}' not found at {path}. Available: {available}"
-        )
-    return HierarchicalReferenceModel.load(path)
+    from . import registry
+
+    found = _reference_dirs().get(name)
+    if found:
+        return HierarchicalReferenceModel.load(found)
+    if download and name in registry.REGISTRY:
+        return HierarchicalReferenceModel.load(
+            registry.fetch_reference(name, quiet=quiet))
+
+    known = ", ".join(r["name"] for r in list_references()) or "none"
+    raise FileNotFoundError(
+        f"reference '{name}' is not installed, cached or downloadable. Known: {known}"
+    )
