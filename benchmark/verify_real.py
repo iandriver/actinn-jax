@@ -12,7 +12,7 @@ Examples
 --------
   python benchmark/verify_real.py split  ~/Downloads/krasnow_lung_atlas_10x.h5ad
   python benchmark/verify_real.py cross \
-      ~/Downloads/Sikkama_HCLA.h5ad ~/Downloads/krasnow_lung_atlas_10x.h5ad
+      ~/Downloads/Sikkema_HLCA.h5ad ~/Downloads/krasnow_lung_atlas_10x.h5ad
 """
 
 import argparse
