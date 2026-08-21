@@ -401,7 +401,7 @@ Every public name, with its parameters. The examples assume `import actinn_jax a
 
 ```python
 train_reference(train_data, train_label_name="celltype", learning_rate=0.0001,
-                num_epochs=50, batch_size="auto", use_raw="auto",
+                num_epochs="auto", batch_size="auto", use_raw="auto",
                 max_cells_per_label=None, seed=3, print_cost=True,
                 standardize=False)
 ```
@@ -411,8 +411,8 @@ Train a classifier on a labelled reference. Returns a [`ReferenceModel`](#refere
 - `train_data` — `.h5ad` path or `AnnData` holding raw counts (in `.raw` or `.X`) and cell-type labels in `obs[train_label_name]`.
 - `train_label_name` — column of `obs` holding the labels.
 - `learning_rate` — Adam learning rate, used with an exponential-decay schedule.
-- `num_epochs` — passes over the reference.
-- `batch_size` — minibatch size; `"auto"` scales it with reference size. References under ~12.8k cells keep a batch of 128; larger ones get a proportionally bigger batch, which is faster and marginally more accurate at atlas scale.
+- `num_epochs` — passes over the reference; `"auto"` scales the count with reference size. A few-hundred-cell reference needs several hundred epochs to train at all — at the inherited fixed 50 it lands near chance, silently. References of 5,000 cells and up get 50, unchanged. Pass an int to pin it.
+- `batch_size` — minibatch size; `"auto"` scales it with reference size. Atlas-scale references get a proportionally bigger batch, which is faster and marginally more accurate; references under ~2k cells get a smaller one (down to 32), so each epoch is more than a handful of updates. Between those, 128.
 - `use_raw` — `"auto"`, `True` or `False`. `"auto"` uses `adata.raw` counts when present.
 - `max_cells_per_label` — balance and cap the training set to this many cells per class. Recommended for large atlases: it bounds memory and speeds up training.
 - `seed` — seed for weight initialisation and minibatch shuffling.
@@ -706,6 +706,12 @@ markers["novel_1"]
   feature space for an accuracy boost.
 - **Model** — a 4-layer MLP (100→50→25→n_types), Glorot init, Adam with
   exponential-decay schedule, trained with a JIT-compiled epoch step.
+- **Schedule scaled to the reference** — batch size and epoch count both default
+  to `"auto"`. Above 5,000 cells this is exactly ACTINN's inherited schedule (50
+  epochs; batch 128 up to 12.8k cells, then n/100 capped at 1024). Below it, the
+  batch shrinks and the epoch count rises, because the inherited fixed schedule
+  gives a 437-cell reference only ~170 gradient steps in total and returns
+  near-chance labels for them. Training that pins too few total steps warns.
 - **Cached `ReferenceModel`** stores the trained weights, gene set, and label
   mapping so queries are projected onto the reference's fixed gene space.
 

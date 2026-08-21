@@ -12,6 +12,7 @@ The model is tiny, so JAX (JIT + autodiff) gives a fast, dependency-light
 training loop that runs on CPU everywhere and on the Apple GPU via ``jax-metal``.
 """
 
+import warnings
 from functools import partial
 
 import jax
@@ -27,29 +28,83 @@ LAYER_SIZES = (100, 50, 25)
 DEFAULT_LEARNING_RATE = 0.0001
 DEFAULT_NUM_EPOCHS = 50
 DEFAULT_BATCH_SIZE = 128
-# Keep at least this many gradient steps per epoch when auto-sizing the batch, so
-# small references still get plenty of updates.
+DEFAULT_L2 = 0.005
+DEFAULT_SEED = 3
+
+# --------------------------------------------------------------------------- #
+# Auto-scaled batch size and epoch count
+#
+# Both rules pivot on SMALL_REFERENCE_CELLS: at or above it they return exactly
+# the historical values (batch 128 up to 12.8k cells then n/100 capped at 1024;
+# 50 epochs), so every reference in the benchmark range (6.9k - 585k cells) is
+# bit-identical to previous versions. Below it they trade batch size for gradient
+# steps, because ACTINN's inherited fixed defaults starve a small reference:
+# 437 training cells at batch 128 for 50 epochs is ~170 updates in total, which
+# lands near chance (see :func:`auto_num_epochs`).
+# --------------------------------------------------------------------------- #
+SMALL_REFERENCE_CELLS = 5000
+# Target steps per epoch above / below the pivot.
 MIN_BATCHES_PER_EPOCH = 100
+MIN_SMALL_BATCHES_PER_EPOCH = 16
+MIN_AUTO_BATCH_SIZE = 32
 MAX_AUTO_BATCH_SIZE = 1024
+# Bound on the auto epoch count, so a handful of cells cannot spin forever.
+MAX_AUTO_NUM_EPOCHS = 1000
+# Fewer total updates than this and the network is under-fitted enough to return
+# near-chance labels; warn rather than failing silently.
+MIN_USEFUL_TOTAL_STEPS = 1500
 
 
 def auto_batch_size(n_samples):
-    """Batch size scaled to the reference size, clamped to [128, 1024].
+    """Batch size scaled to the reference size, clamped to [32, 1024].
 
-    ACTINN's inherited batch of 128 is fine for small references but pathological
-    on atlas-scale ones: a 47k-cell reference becomes ~24k tiny update steps whose
-    per-step dispatch overhead dominates the actual matmuls. Scaling the batch so
-    each epoch takes ~``MIN_BATCHES_PER_EPOCH`` steps cuts fit time (70.8s -> ~43s
-    on a 47k-cell liver reference) and, because the gradients are less noisy, also
-    slightly *improved* held-out accuracy there (0.822 -> 0.826).
+    ACTINN's inherited batch of 128 is pathological at both ends. On atlas-scale
+    references it is far too small: a 47k-cell reference becomes ~24k tiny update
+    steps whose per-step dispatch overhead dominates the actual matmuls. Scaling
+    the batch so each epoch takes ~``MIN_BATCHES_PER_EPOCH`` steps cuts fit time
+    (70.8s -> ~43s on a 47k-cell liver reference) and, because the gradients are
+    less noisy, also slightly *improved* held-out accuracy there (0.822 -> 0.826).
 
-    The lower clamp means references below ~12.8k cells keep batch 128 exactly, so
-    small/medium runs are bit-identical to previous versions.
+    On a few-hundred-cell reference it is too *large*: 437 cells give three steps
+    per epoch, so the model barely moves. Below ``SMALL_REFERENCE_CELLS`` the
+    batch shrinks instead, targeting ``MIN_SMALL_BATCHES_PER_EPOCH`` steps per
+    epoch down to a floor of ``MIN_AUTO_BATCH_SIZE``; in practice this only bites
+    under ~2k cells, since 2048 // 16 == 128 already.
+
+    References at or above ``SMALL_REFERENCE_CELLS`` are unchanged.
     """
-    return int(min(MAX_AUTO_BATCH_SIZE,
-                   max(DEFAULT_BATCH_SIZE, n_samples // MIN_BATCHES_PER_EPOCH)))
-DEFAULT_L2 = 0.005
-DEFAULT_SEED = 3
+    if n_samples >= SMALL_REFERENCE_CELLS:
+        return int(min(MAX_AUTO_BATCH_SIZE,
+                       max(DEFAULT_BATCH_SIZE, n_samples // MIN_BATCHES_PER_EPOCH)))
+    return int(min(DEFAULT_BATCH_SIZE,
+                   max(MIN_AUTO_BATCH_SIZE, n_samples // MIN_SMALL_BATCHES_PER_EPOCH)))
+
+
+def auto_num_epochs(n_samples):
+    """Epoch count scaled to the reference size, clamped to [50, 1000].
+
+    A fixed 50 epochs means the number of gradient steps a reference gets is
+    proportional to its cell count, so a small reference is trained far less than
+    a large one -- silently, with no warning and no error, just bad labels. On the
+    Open Problems ``label_projection`` smoke-test resource (437 training cells,
+    31 classes, top-1000 HVGs) the inherited defaults score 0.086 accuracy /
+    0.035 macro-F1, barely above the majority-vote control, where celltypist gets
+    0.503 and a linear SVM 0.491. Training the same reference long enough
+    (batch 32, ~500 epochs) reaches 0.405 / 0.239 -- the model was fine, the
+    schedule was not.
+
+    Below ``SMALL_REFERENCE_CELLS`` the epoch count therefore scales as 1/n: the
+    smaller the reference, the more passes it takes, so the total amount of
+    training stays in the range a 5k-cell reference already gets instead of
+    shrinking with the cell count. The rule is continuous at the pivot -- a
+    5000-cell reference maps to exactly ``DEFAULT_NUM_EPOCHS`` -- and returns
+    ``DEFAULT_NUM_EPOCHS`` unchanged above it.
+    """
+    if n_samples >= SMALL_REFERENCE_CELLS:
+        return DEFAULT_NUM_EPOCHS
+    # ceil, so the value is >= DEFAULT_NUM_EPOCHS everywhere below the pivot.
+    scaled = -(-DEFAULT_NUM_EPOCHS * SMALL_REFERENCE_CELLS // max(int(n_samples), 1))
+    return int(min(MAX_AUTO_NUM_EPOCHS, scaled))
 
 
 def initialize_parameters(num_features, num_types, layer_sizes=LAYER_SIZES, seed=DEFAULT_SEED):
@@ -102,7 +157,7 @@ def train(
     X,
     Y,
     starting_learning_rate=DEFAULT_LEARNING_RATE,
-    num_epochs=DEFAULT_NUM_EPOCHS,
+    num_epochs="auto",
     batch_size="auto",
     l2=DEFAULT_L2,
     layer_sizes=LAYER_SIZES,
@@ -127,8 +182,16 @@ def train(
         small on atlas-scale references: it produces tens of thousands of tiny
         update steps whose per-step dispatch cost dominates, and it under-uses CPU
         BLAS. On a 47k-cell reference auto (batch 469) cut fit time 70.8s -> ~43s
-        *and* slightly improved held-out accuracy (0.822 -> 0.826). References
-        below ~12.8k cells keep batch 128, so their behaviour is unchanged.
+        *and* slightly improved held-out accuracy (0.822 -> 0.826). It is also too
+        large under ~2k cells, where it leaves only a handful of steps per epoch.
+    num_epochs : int or 'auto', default 'auto'
+        ``'auto'`` scales the epoch count with the reference size (see
+        :func:`auto_num_epochs`): ``DEFAULT_NUM_EPOCHS`` at or above
+        ``SMALL_REFERENCE_CELLS``, more below it, where a fixed 50 epochs leaves
+        the network badly under-trained. Pass an int to pin it.
+
+        Together the two 'auto' rules leave references of ``SMALL_REFERENCE_CELLS``
+        cells and up bit-identical to previous versions.
 
     Returns
     -------
@@ -143,6 +206,25 @@ def train(
     n_types = Y.shape[1]
     if isinstance(batch_size, str):
         batch_size = auto_batch_size(n_samples)
+    if isinstance(num_epochs, str):
+        num_epochs = auto_num_epochs(n_samples)
+
+    n_batches = max(1, n_samples // batch_size)
+    total_steps = n_batches * num_epochs
+    if total_steps < MIN_USEFUL_TOTAL_STEPS:
+        warnings.warn(
+            f"actinn-jax: this reference trains for only {total_steps} gradient "
+            f"steps ({n_samples} cells, batch {batch_size}, {num_epochs} epochs). "
+            f"Below ~{MIN_USEFUL_TOTAL_STEPS} steps the network is usually "
+            "under-fitted and can return near-chance labels without any other "
+            "sign of trouble. Raise num_epochs, lower batch_size, or leave both "
+            "at 'auto'.",
+            UserWarning,
+            stacklevel=2,
+        )
+    elif print_cost and n_samples < SMALL_REFERENCE_CELLS:
+        print("Small reference (%i cells): batch %i, %i epochs, %i gradient steps."
+              % (n_samples, batch_size, num_epochs, total_steps))
 
     # Optional per-gene standardization applied per minibatch (after row densification)
     # so peak memory stays at (batch_size x features): subtracting the mean would
@@ -158,7 +240,6 @@ def train(
     optimizer = optax.adam(_make_schedule(starting_learning_rate))
     opt_state = optimizer.init(params)
 
-    n_batches = max(1, n_samples // batch_size)
     grad_fn = jax.value_and_grad(partial(_loss, l2=l2))
 
     @jax.jit
@@ -189,7 +270,9 @@ def train(
             # compute -- serializing the loop. Only pay it when we actually print.
             if print_cost:
                 epoch_cost += float(loss) / n_batches
-        if print_cost and (epoch + 1) % 5 == 0:
+        # Report ~10 times per run: every 5 epochs at the inherited 50, less often
+        # when auto-scaling has raised the count into the hundreds.
+        if print_cost and (epoch + 1) % max(5, num_epochs // 10) == 0:
             print("Cost after epoch %i: %f" % (epoch + 1, epoch_cost))
 
     if print_cost:

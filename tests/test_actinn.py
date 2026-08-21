@@ -1,13 +1,14 @@
 """End-to-end tests for the JAX ACTINN reference mapping."""
 
 import os
+import warnings
 
 import numpy as np
 import pandas as pd
 import pytest
 
 import actinn_jax as ctp
-from conftest import make_adata
+from conftest import make_adata, make_hard_adata
 
 
 def _accuracy(adata, pred_col="celltype_pred"):
@@ -58,8 +59,6 @@ def test_auto_matches_gene_ids_from_var_column():
 
 def test_matching_var_names_are_left_untouched():
     """When var_names already match the reference, no fallback/warning fires."""
-    import warnings
-
     train = make_adata(seed=1)
     query = make_adata(seed=2)
     query.var["ensembl_id"] = ["DECOY_%d" % i for i in range(query.n_vars)]
@@ -156,16 +155,103 @@ def test_celltype_predict_actinn_wrapper(tmp_path):
     assert "W1" in params
 
 
-def test_auto_batch_size_preserves_small_reference_behaviour():
-    """'auto' must not change small references: below ~12.8k cells it stays at 128, so
-    existing results/models are unaffected; above that it scales but is clamped."""
-    from actinn_jax.actinn_utils import auto_batch_size, DEFAULT_BATCH_SIZE
+def test_auto_schedule_frozen_at_and_above_the_pivot():
+    """The published benchmark numbers were measured on references of 6,892 to
+    584,944 cells with a fixed batch of 128-1024 and 50 epochs. Auto-scaling for
+    small references must not touch anything in that range: at or above
+    SMALL_REFERENCE_CELLS both rules have to reproduce the historical schedule
+    exactly."""
+    import actinn_jax.actinn_utils as au
 
-    for n in (100, 1981, 8109, 12_800):          # small/medium -> unchanged
-        assert auto_batch_size(n) == DEFAULT_BATCH_SIZE
-    assert auto_batch_size(25_081) == 250        # scales with reference size
-    assert auto_batch_size(46_911) == 469
-    assert auto_batch_size(5_000_000) == 1024    # clamped at the top
+    def historical_batch(n):                     # the pre-auto-epoch formula
+        return int(min(1024, max(au.DEFAULT_BATCH_SIZE, n // 100)))
+
+    benchmark_sizes = (6_892, 8_109, 12_800, 25_081, 46_911, 85_256, 584_944)
+    for n in list(range(au.SMALL_REFERENCE_CELLS, 20_000, 97)) + list(benchmark_sizes):
+        assert au.auto_batch_size(n) == historical_batch(n), n
+        assert au.auto_num_epochs(n) == au.DEFAULT_NUM_EPOCHS, n
+
+    assert au.auto_batch_size(12_800) == 128     # spot checks of the old test
+    assert au.auto_batch_size(25_081) == 250     # scales with reference size
+    assert au.auto_batch_size(46_911) == 469
+    assert au.auto_batch_size(5_000_000) == 1024  # clamped at the top
     # every auto batch keeps a healthy number of gradient steps per epoch
     for n in (25_081, 46_911, 200_000):
-        assert n // auto_batch_size(n) >= 100
+        assert n // au.auto_batch_size(n) >= 100
+
+
+def test_auto_schedule_bit_identical_above_the_pivot():
+    """Not just the resolved hyper-parameters -- the trained weights themselves
+    must be unchanged above the pivot, so cached references and published figures
+    stay reproducible."""
+    import actinn_jax.actinn_utils as au
+
+    rng = np.random.default_rng(0)
+    X = rng.random((5_200, 60)).astype(np.float32)
+    Y = np.eye(5, dtype=np.float32)[rng.integers(0, 5, 5_200)]
+
+    auto = au.train(X, Y, print_cost=False)
+    historical = au.train(X, Y, num_epochs=50, batch_size=128, print_cost=False)
+    assert all(np.array_equal(auto[k], historical[k]) for k in auto)
+
+
+def test_small_reference_gets_enough_gradient_steps():
+    """Below the pivot the schedule targets gradient steps rather than a fixed
+    batch: 437 cells used to get ~170 updates in total, which is not training."""
+    import actinn_jax.actinn_utils as au
+
+    # the inherited schedule, for contrast
+    assert 437 // au.DEFAULT_BATCH_SIZE * au.DEFAULT_NUM_EPOCHS < 200
+
+    for n in (100, 437, 1_000, 2_000, 4_999):
+        batch, epochs = au.auto_batch_size(n), au.auto_num_epochs(n)
+        assert au.MIN_AUTO_BATCH_SIZE <= batch <= au.DEFAULT_BATCH_SIZE, n
+        assert au.DEFAULT_NUM_EPOCHS <= epochs <= au.MAX_AUTO_NUM_EPOCHS, n
+        steps = max(1, n // batch) * epochs
+        assert steps >= au.MIN_USEFUL_TOTAL_STEPS, (n, steps)
+
+    # continuous at the pivot: a 5000-cell reference maps to the fixed default,
+    # so there is no jump in behaviour on either side of it.
+    assert au.auto_num_epochs(5_000) == au.DEFAULT_NUM_EPOCHS
+    assert au.auto_num_epochs(4_999) == au.DEFAULT_NUM_EPOCHS + 1
+
+
+def test_small_reference_trains_instead_of_landing_near_chance():
+    """The regression this guards: on a few-hundred-cell reference the inherited
+    fixed schedule (50 epochs, batch 128) under-trains so badly that predictions
+    are near chance -- silently, with no warning and no error. The default path
+    has to actually fit."""
+    train = make_hard_adata(n_cells=437, seed=1)
+    query = make_hard_adata(n_cells=163, seed=2)
+    chance = 1.0 / train.obs["celltype"].nunique()
+
+    def accuracy(**train_kwargs):
+        model = ctp.train_reference(train, train_label_name="celltype",
+                                    print_cost=False, **train_kwargs)
+        pred = model.predict_frame(query)[0].loc[query.obs_names, "celltype"].values
+        return float((pred == query.obs["celltype"].values).mean())
+
+    starved = accuracy(num_epochs=50, batch_size=128)   # what the defaults used to be
+    default = accuracy()                                # what they are now
+
+    assert starved < 5 * chance          # near chance, as reported
+    assert default > 0.4                 # actually learns the classes
+    assert default > 3 * starved         # and by a wide margin
+
+
+def test_starved_training_warns():
+    """A user who pins the hyper-parameters can still starve the fit; that must
+    not be silent."""
+    import actinn_jax.actinn_utils as au
+
+    rng = np.random.default_rng(0)
+    X = rng.random((400, 30)).astype(np.float32)
+    Y = np.eye(4, dtype=np.float32)[rng.integers(0, 4, 400)]
+
+    with pytest.warns(UserWarning, match="gradient steps"):
+        au.train(X, Y, num_epochs=50, batch_size=128, print_cost=False)
+
+    # the auto schedule on the same data clears the bar, so no warning fires
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        au.train(X, Y, print_cost=False)
