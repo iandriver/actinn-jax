@@ -1,12 +1,31 @@
 """Tests for the two-stage hierarchical workflow."""
 
 import os
+import warnings
 
 import numpy as np
 import pytest
 
 import actinn_jax as aj
 from conftest import make_adata
+
+
+def _build(*args, **kwargs):
+    """``build_hierarchical_reference`` with the training schedule pinned.
+
+    These tests exercise routing, persistence, pruning and abstention -- not fit
+    quality -- on toy classes that separate in a handful of gradient steps. A
+    hierarchy trains one arm per coarse group, and left at ``'auto'`` each of
+    those few-hundred-cell arms would train for hundreds of epochs: correct, but
+    ~10x the suite runtime for no extra coverage. Small-reference scheduling is
+    covered directly in ``test_actinn.py``.
+    """
+    kwargs.setdefault("num_epochs", 50)
+    kwargs.setdefault("batch_size", 128)
+    with warnings.catch_warnings():
+        # ...which is exactly the schedule au.train warns about. Expected here.
+        warnings.filterwarnings("ignore", message=".*gradient steps.*")
+        return aj.build_hierarchical_reference(*args, **kwargs)
 
 
 def _embeddings_from_labels(adata, dim=16, seed=0):
@@ -31,7 +50,7 @@ def test_build_annotate_roundtrip(tmp_path):
     query = make_adata(n_types=6, seed=2)
     emb = _embeddings_from_labels(train)
 
-    model = aj.build_hierarchical_reference(train, "celltype", emb, n_groups=3,
+    model = _build(train, "celltype", emb, n_groups=3,
                                             print_cost=False)
     out = aj.annotate(query, model, output_label_name="pred")
     acc = (out.obs["pred"].values == out.obs["celltype"].values).mean()
@@ -54,7 +73,7 @@ def test_build_from_precomputed_hierarchy():
     types = sorted(train.obs["celltype"].unique())
     hier = {t: str(i % 2) for i, t in enumerate(types)}
     hier.pop(types[0])                       # drop one -> exercises the fallback group
-    model = aj.build_hierarchical_reference(train, "celltype", hierarchy=hier,
+    model = _build(train, "celltype", hierarchy=hier,
                                             print_cost=False)
     assert model.type_to_group[types[0]] == "_unmapped"
     out = aj.annotate(query, model, output_label_name="pred")
@@ -70,7 +89,7 @@ def test_refine_to_query_drops_absent_keeps_present():
     query = query_full[query_full.obs["celltype"].isin(present)].copy()
     emb = _embeddings_from_labels(train, dim=16)
 
-    model = aj.build_hierarchical_reference(train, "celltype", emb, n_groups=4,
+    model = _build(train, "celltype", emb, n_groups=4,
                                             print_cost=False)
     refined = aj.refine_to_query(model, query)
     kept = set().union(*refined.allowed_classes.values()) if refined.allowed_classes else set()
@@ -91,7 +110,7 @@ def test_abstain_threshold():
     train = make_adata(n_types=6, seed=1)
     query = make_adata(n_types=6, seed=2)
     emb = _embeddings_from_labels(train)
-    model = aj.build_hierarchical_reference(train, "celltype", emb, n_groups=3,
+    model = _build(train, "celltype", emb, n_groups=3,
                                             print_cost=False)
     # softmax max prob is always < 1.0, so min_prob=1.0 abstains on every cell
     frame = model.predict_frame(query, min_prob=1.0)[0]
@@ -108,7 +127,7 @@ def _tissue_model(seed=1):
     """A small hierarchical model with a hand-set class_to_tissue map."""
     train = make_adata(n_types=6, seed=seed)
     emb = _embeddings_from_labels(train)
-    model = aj.build_hierarchical_reference(train, "celltype", emb, n_groups=3,
+    model = _build(train, "celltype", emb, n_groups=3,
                                             print_cost=False)
     t = sorted(model.classes)             # type_0 .. type_5
     model.class_to_tissue = {
@@ -135,7 +154,7 @@ def test_refine_to_tissue_prunes_wrong_tissue():
 def test_refine_to_tissue_synonym_and_predict():
     train = make_adata(n_types=6, seed=1)
     emb = _embeddings_from_labels(train)
-    model = aj.build_hierarchical_reference(train, "celltype", emb, n_groups=3,
+    model = _build(train, "celltype", emb, n_groups=3,
                                             print_cost=False)
     t = sorted(model.classes)
     model.class_to_tissue = {t[0]: ["liver"], t[1]: ["lung"], t[2]: ["*"],
@@ -173,7 +192,7 @@ def test_refine_to_tissue_noop_without_map():
     """A model with no tissue map imposes no filter (allowed_* stay None)."""
     train = make_adata(n_types=4, seed=1)
     emb = _embeddings_from_labels(train)
-    model = aj.build_hierarchical_reference(train, "celltype", emb, n_groups=2,
+    model = _build(train, "celltype", emb, n_groups=2,
                                             print_cost=False)
     refined = aj.refine_to_tissue(model, tissue="liver")
     assert refined.allowed_groups is None and refined.allowed_classes is None
@@ -201,7 +220,7 @@ def test_cross_species_query_raises_before_predicting(tmp_path):
     import scipy.sparse as sp
 
     train = make_adata(n_types=4, seed=1)
-    model = aj.build_hierarchical_reference(train, "celltype",
+    model = _build(train, "celltype",
                                             _embeddings_from_labels(train), n_groups=2,
                                             print_cost=False)
     model.build_info = {"organism": "homo_sapiens"}
@@ -232,7 +251,7 @@ def _make_archive(tmp_path, name="toy_ref"):
     import tarfile
 
     train = make_adata(n_types=4, seed=3)
-    model = aj.build_hierarchical_reference(train, "celltype",
+    model = _build(train, "celltype",
                                             _embeddings_from_labels(train), n_groups=2,
                                             print_cost=False)
     src = tmp_path / name

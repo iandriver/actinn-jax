@@ -381,7 +381,7 @@ def train_reference(
     train_data,
     train_label_name="celltype",
     learning_rate=au.DEFAULT_LEARNING_RATE,
-    num_epochs=au.DEFAULT_NUM_EPOCHS,
+    num_epochs="auto",
     batch_size="auto",
     use_raw="auto",
     max_cells_per_label=None,
@@ -403,9 +403,16 @@ def train_reference(
         recommended for large atlases -- bounds memory and speeds up training.
     batch_size : int or 'auto', default 'auto'
         Minibatch size; ``'auto'`` scales it with the reference size (see
-        :func:`actinn_utils.auto_batch_size`). References under ~12.8k cells keep
-        the historical batch of 128; larger ones get a proportionally bigger batch,
-        which is substantially faster and marginally more accurate at atlas scale.
+        :func:`actinn_utils.auto_batch_size`). Atlas-scale references get a
+        proportionally bigger batch, which is substantially faster and marginally
+        more accurate; references under ~2k cells get a smaller one, so each epoch
+        is more than a handful of updates.
+    num_epochs : int or 'auto', default 'auto'
+        Passes over the reference; ``'auto'`` scales the count with the reference
+        size (see :func:`actinn_utils.auto_num_epochs`). A few-hundred-cell
+        reference needs several hundred epochs to train at all -- at the inherited
+        fixed 50 it lands near chance, silently. References of 5000 cells and up
+        get ``actinn_utils.DEFAULT_NUM_EPOCHS`` (50), unchanged.
     standardize : bool, default False
         Z-score each selected gene using the reference's frozen mean/std and apply
         the same transform to every query -- a cheap domain-alignment into the
@@ -561,7 +568,7 @@ def celltype_predict_actinn(
     Y = au.one_hot(int_labels, len(classes))
     print("Cell types in training set:", {c: i for i, c in enumerate(classes)})
     print("# Training cells:", len(labels))
-    params = au.train(ref, Y, num_epochs=au.DEFAULT_NUM_EPOCHS, scale=(mu, sd))
+    params = au.train(ref, Y, num_epochs="auto", scale=(mu, sd))
 
     proba = au.predict_proba(params, qry)
     idx = np.argmax(proba, axis=1)
