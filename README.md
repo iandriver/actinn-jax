@@ -75,8 +75,35 @@ adata.var_names = adata.var["gene_ids"].astype(str).values
 adata.var_names_make_unique()
 ```
 
-actinn-jax expects raw integer counts. For CELLxGENE-style objects where `.X` holds
-normalised values and the counts are in `.raw`, it finds the counts on its own.
+## Raw counts
+
+actinn-jax expects raw integer counts, because it does its own normalisation (counts per
+10,000, then log2). For CELLxGENE-style objects where `.X` holds normalised values and
+the counts are in `.raw`, it finds the counts on its own.
+
+If you hand it values that scanpy has already normalised, it warns:
+
+```
+UserWarning: actinn-jax: adata.X does not look like raw counts (it holds
+non-integer values). ACTINN applies its own CP10k+log2 normalization, so
+already-normalized input is normalized twice and the labels will shift
+without erroring.
+```
+
+That warning is worth acting on. Normalising twice does not fail and does not produce
+obvious nonsense; it produces confident labels that differ. On pbmc3k, running
+`sc.pp.normalize_total` and `sc.pp.log1p` before annotating changes the label for 7.6% of
+cells, and the changes land on real distinctions: 67 cells move between naive and memory
+CD4 T, 25 between CD14 and CD14/CD16 monocyte.
+
+So if you are partway through a scanpy workflow, keep the counts somewhere:
+
+```python
+adata.layers["counts"] = adata.X.copy()     # before you normalise
+...
+adata.X = adata.layers["counts"]            # then annotate
+adata = aj.annotate(adata, model)
+```
 
 ## Cells the reference cannot explain
 

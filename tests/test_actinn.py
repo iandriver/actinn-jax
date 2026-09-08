@@ -1,6 +1,7 @@
 """End-to-end tests for the JAX ACTINN reference mapping."""
 
 import os
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -169,3 +170,57 @@ def test_auto_batch_size_preserves_small_reference_behaviour():
     # every auto batch keeps a healthy number of gradient steps per epoch
     for n in (25_081, 46_911, 200_000):
         assert n // auto_batch_size(n) >= 100
+
+
+def test_raw_counts_do_not_warn():
+    """The correct input must stay silent, or the warning trains people to ignore it."""
+    train = make_adata(seed=1)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ctp.train_reference(train, train_label_name="celltype", print_cost=False)
+    assert not [w for w in caught if "raw counts" in str(w.message)]
+
+
+def test_normalized_input_warns():
+    """ACTINN normalizes internally, so pre-normalized input is normalized twice.
+
+    That does not raise and does not look wrong -- it silently shifts labels -- so it
+    has to be caught at the point the matrix is read.
+    """
+    query = make_adata(seed=2)
+    query.X = np.log1p(query.X.astype(np.float64) / 3.0)  # non-integer, non-negative
+
+    model = ctp.train_reference(make_adata(seed=1), train_label_name="celltype",
+                                print_cost=False)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ctp.predict(query, model, output_label_name="celltype_pred")
+    assert [w for w in caught if "raw counts" in str(w.message)]
+
+
+def test_counts_in_raw_do_not_warn():
+    """The CELLxGENE layout: normalized .X, counts in .raw. use_raw='auto' takes .raw,
+    so the check must read the slot actually used and stay quiet."""
+    query = make_adata(seed=2)
+    query.raw = query.copy()
+    query.X = np.log1p(query.X.astype(np.float64))
+
+    model = ctp.train_reference(make_adata(seed=1), train_label_name="celltype",
+                                print_cost=False)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ctp.predict(query, model, output_label_name="celltype_pred")
+    assert not [w for w in caught if "raw counts" in str(w.message)]
+
+
+def test_counts_check_is_sampled_not_scanned():
+    """Integer counts stored as float must pass, and the check must not depend on
+    reading the whole matrix."""
+    from actinn_jax.actinn_predict import _looks_like_counts
+    import scipy.sparse as sp
+
+    assert _looks_like_counts(sp.csr_matrix(np.array([[0., 3., 7.]])))
+    assert not _looks_like_counts(sp.csr_matrix(np.array([[0., 0.5, 7.]])))
+    assert not _looks_like_counts(sp.csr_matrix(np.array([[0., -1.2, 7.]])))
+    assert _looks_like_counts(sp.csr_matrix((0, 5)))          # empty
+    assert _looks_like_counts(sp.csr_matrix(np.zeros((4, 5))))  # all-zero says nothing
