@@ -13,6 +13,12 @@ before you can start.
 pip install actinn-jax
 ```
 
+or from [bioconda](https://bioconda.github.io/recipes/actinn-jax/README.html):
+
+```bash
+conda install -c bioconda actinn-jax
+```
+
 That is everything you need. A pre-trained human reference (16 MB) is included in the
 package, so the example below runs offline.
 
